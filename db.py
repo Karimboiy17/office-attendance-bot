@@ -71,10 +71,25 @@ def add_employee(telegram_id: int, name: str, role: str = "office_manager",
                  branch: str = "integro", shift: str = "morning") -> bool:
     conn = get_conn()
     try:
-        conn.execute("""
-            INSERT OR REPLACE INTO employees (telegram_id, name, role, branch, shift, active)
-            VALUES (?, ?, ?, ?, ?, 1)
-        """, (telegram_id, name, role, branch, shift))
+        # Avval mavjudligini tekshiramiz
+        existing = conn.execute(
+            "SELECT custom_work_start, custom_work_end FROM employees WHERE telegram_id = ?",
+            (telegram_id,)
+        ).fetchone()
+        
+        if existing:
+            # Mavjud — custom vaqtlarni saqlab, UPDATE qilamiz
+            conn.execute("""
+                UPDATE employees
+                SET name = ?, role = ?, branch = ?, shift = ?, active = 1
+                WHERE telegram_id = ?
+            """, (name, role, branch, shift, telegram_id))
+        else:
+            # Yangi xodim
+            conn.execute("""
+                INSERT INTO employees (telegram_id, name, role, branch, shift, active)
+                VALUES (?, ?, ?, ?, ?, 1)
+            """, (telegram_id, name, role, branch, shift))
         conn.commit()
         return True
     except Exception as e:
