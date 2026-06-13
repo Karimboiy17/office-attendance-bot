@@ -129,6 +129,42 @@ def get_employees_by_branch(branch: str) -> list[dict]:
 
 # ── Attendance CRUD ──
 
+GRACE_MINUTES = 5  # 5 daqiqa kechikishga ruxsat (hali on_time)
+TOO_LATE_MINUTES = 60  # 60 daqiqadan keyin umuman qabul qilinmaydi
+
+MAX_EARLY_MINUTES = 20  # Smena boshlanishidan necha daqiqa oldin ruxsat
+
+
+def validate_checkin_time(emp: dict) -> dict | None:
+    """Check-in vaqtini tekshiradi. Agar ruxsat bo'lmasa None qaytaradi.
+    Qaytarsa: {"valid": True, "late_minutes": N, "status": "on_time"|"late"}
+    """
+    from config import SHIFTS
+    now = datetime.now(tz)
+    shift_cfg = SHIFTS.get(emp["shift"])
+    if not shift_cfg:
+        return {"valid": True, "late_minutes": 0, "status": "on_time"}
+
+    start_hour = shift_cfg["start"]
+    total_now = now.hour * 60 + now.minute
+    total_start = start_hour * 60
+
+    # Juda erta — ruxsat yo'q
+    if total_now < total_start - MAX_EARLY_MINUTES:
+        return None
+
+    # Juda kech — ruxsat yo'q
+    if total_now > total_start + TOO_LATE_MINUTES:
+        return None
+
+    # Kechikishni hisoblash
+    if total_now > total_start + GRACE_MINUTES:
+        late_minutes = total_now - total_start
+        return {"valid": True, "late_minutes": late_minutes, "status": "late"}
+    else:
+        return {"valid": True, "late_minutes": 0, "status": "on_time"}
+
+
 def check_in(employee_id: int, video_id: str = "") -> dict | None:
     """Check-in qilish. Status avtomatik hisoblanadi."""
     now = datetime.now(tz)
@@ -146,14 +182,13 @@ def check_in(employee_id: int, video_id: str = "") -> dict | None:
             conn.close()
             return None
 
-        shift_info = {"morning": (8, 0), "afternoon": (14, 0)}
-        start_hour, start_min = shift_info.get(emp["shift"], (8, 0))
+        validation = validate_checkin_time(emp)
+        if not validation:
+            conn.close()
+            return None
 
-        late_minutes = 0
-        if now.hour > start_hour or (now.hour == start_hour and now.minute > start_min):
-            late_minutes = (now.hour - start_hour) * 60 + (now.minute - start_min)
-
-        status = "late" if late_minutes > 0 else "on_time"
+        late_minutes = validation["late_minutes"]
+        status = validation["status"]
 
         conn.execute("""
             INSERT INTO attendance (employee_id, date, check_in_time, check_in_video_id, status, late_minutes)

@@ -1,7 +1,7 @@
 """Office Attendance Bot — Asosiy fayl"""
 
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime, time as dt_time, timedelta
 import re
 
 import pytz
@@ -110,6 +110,31 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Check-in yoki check-out?
     if not db.is_checked_in(user_id):
         # CHECK-IN
+
+        # ── Vaqt cheklovlarini tekshirish ──
+        shift_cfg = config.SHIFTS.get(emp["shift"])
+        if shift_cfg:
+            now = datetime.now(tz)
+            shift_start = now.replace(hour=shift_cfg["start"], minute=0, second=0, microsecond=0)
+            allowed_from = shift_start - timedelta(minutes=20)
+            too_late = shift_start + timedelta(minutes=60)
+            shift_label = shift_cfg["label"]
+
+            if now < allowed_from:
+                await update.message.reply_text(
+                    f"⏰ {user.first_name}, sizning smenangiz {shift_label}.\n"
+                    f"Smena boshlanishiga hali vaqt bor. "
+                    f"Faqat ish vaqtida video yuboring. Qabul qilinmadi."
+                )
+                return
+
+            if now > too_late:
+                await update.message.reply_text(
+                    f"❌ {user.first_name}, siz juda kech qoldingiz ({now.strftime('%H:%M')}). "
+                    f"Qabul qilinmadi."
+                )
+                return
+
         result = db.check_in(user_id, video_id)
 
         if not result:
