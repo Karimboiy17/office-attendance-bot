@@ -1365,6 +1365,49 @@ async def shift_reminder(context: ContextTypes.DEFAULT_TYPE, shift: str):
 
 
 # ══════════════════════════════════════
+#  SHEETS STATUS
+# ══════════════════════════════════════
+
+async def sheets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Google Sheets ulanish holatini tekshirish (faqat admin)."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Faqat adminlar uchun.")
+        return
+
+    has = "✅ bor"
+    no = "❌ yoq"
+    lines = ["📊 *Google Sheets Status*"]
+    lines.append("")
+    lines.append(f"🔑 SHEET_KEY: {has if config.SHEET_KEY else no}")
+    lines.append(f"🔑 GOOGLE_SERVICE_ACCOUNT_JSON: {has if config.GOOGLE_SERVICE_ACCOUNT_JSON else no}")
+    lines.append(f"🔑 GOOGLE_SERVICE_ACCOUNT_B64: {has if config.GOOGLE_SERVICE_ACCOUNT_B64 else no}")
+    lines.append("")
+
+    try:
+        client = sheets._get_client()
+        if client is None:
+            lines.append("❌ *Auth:* Google Sheets ga ulanish muvaffaqiyatsiz!")
+            lines.append("   Service Account ma'lumotlarini tekshiring.")
+        else:
+            sheet = sheets._get_sheet()
+            if sheet is None:
+                lines.append("❌ *Sheet:* Sheet ochilmadi!")
+                lines.append("   SHEET_KEY va service account ruxsatlarini tekshiring.")
+            else:
+                lines.append(f"✅ *Sheet:* {sheet.title}")
+                lines.append(f"📄 Worksheets: {len(sheet.worksheets())} ta")
+                for ws in sheet.worksheets():
+                    lines.append(f"   • {ws.title} ({ws.row_count} qator)")
+                lines.append("")
+                lines.append("✅ Google Sheets ulanish OK!")
+    except Exception as e:
+        lines.append(f"❌ *Xatolik:* {e}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+# ══════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════
 
@@ -1376,8 +1419,13 @@ def main():
     db.init_db()
 
     # Sheets dan xodimlarni yuklash va o'chirilganlarni sinxronlash
-    sheets.load_employees_from_sheets()
-    sheets.sync_deletions_from_sheets()
+    sheets_ok = sheets._get_client() is not None
+    if sheets_ok:
+        logger.info("✅ Google Sheets auth muvaffaqiyatli!")
+        sheets.load_employees_from_sheets()
+        sheets.sync_deletions_from_sheets()
+    else:
+        logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
 
     # Application
     app = Application.builder().token(config.BOT_TOKEN).build()
@@ -1396,6 +1444,7 @@ def main():
     app.add_handler(CommandHandler("list", list_employees_cmd))
     app.add_handler(CommandHandler("add", add_employee_cmd))
     app.add_handler(CommandHandler("remove", remove_employee_cmd))
+    app.add_handler(CommandHandler("sheets", sheets_cmd))
 
     # --- Guruhdagi video handler ---
     app.add_handler(MessageHandler(
