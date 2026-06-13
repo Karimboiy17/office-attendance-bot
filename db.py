@@ -366,6 +366,20 @@ def get_branch_attendance(branch: str, target_date: str = None) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_branch_attendance_range(branch: str, start_date: str, end_date: str) -> list[dict]:
+    """Bir filial oralig'idagi hisoboti."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT a.*, e.name, e.role, e.branch, e.shift
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.telegram_id
+        WHERE e.branch = ? AND a.date >= ? AND a.date <= ?
+        ORDER BY a.date DESC, e.shift, e.name
+    """, (branch, start_date, end_date)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_missing_today(shift: str = None) -> list[dict]:
     """Bugun hali kelmagan xodimlar."""
     today_str = datetime.now(tz).strftime("%Y-%m-%d")

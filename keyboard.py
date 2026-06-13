@@ -16,6 +16,18 @@ def admin_keyboard():
     )
 
 
+def coordinator_keyboard(branch: str = None):
+    """Koordinator uchun ReplyKeyboard — faqat o'z filiali."""
+    return ReplyKeyboardMarkup(
+        [
+            ["📅 Bugun", "📊 Haftalik"],
+            ["⚠️ Kechikkanlar", "❌ Kelmaganlar"],
+            ["👥 Xodimlar", "🏢 Filiallar"],
+        ],
+        resize_keyboard=True,
+    )
+
+
 def employee_keyboard():
     """Oddiy xodim uchun ReplyKeyboard."""
     return ReplyKeyboardMarkup(

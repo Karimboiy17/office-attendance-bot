@@ -32,9 +32,32 @@ ROLE_LABELS = {
     "coordinator": "Koordinator",
 }
 
-# Coordinator lar (branch adminlari) — hisobot ko'ra oladi
-COORDINATOR_IDS_RAW = os.getenv("COORDINATOR_IDS", "5238121241")
-COORDINATOR_IDS = [int(x.strip()) for x in COORDINATOR_IDS_RAW.split(",") if x.strip().isdigit()]
+# ── Coordinator lar (branch adminlari) ──
+# Format: "integro:5238121241,1054482233;amir_temur:87654321;xalqlas:111111;online:222222"
+# Yoki eski format: "5238121241" (branch ko'rsatilmagan bo'lsa, hamma filialni ko'radi)
+COORDINATORS_RAW = os.getenv("COORDINATORS", "")
+COORDINATORS = {}  # {branch: [user_id, ...]}
+COORDINATOR_IDS = []  # Hamma coordinatorlarning flat listi
+
+if COORDINATORS_RAW:
+    for part in COORDINATORS_RAW.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            branch, ids_str = part.split(":", 1)
+            branch = branch.strip()
+            ids = [int(x.strip()) for x in ids_str.split(",") if x.strip().isdigit()]
+            if ids:
+                COORDINATORS[branch] = ids
+                COORDINATOR_IDS.extend(ids)
+        else:
+            # Eski format — faqat ID lar, hamma branch ni ko'radi
+            ids = [int(x.strip()) for x in part.split(",") if x.strip().isdigit()]
+            for bid in ids:
+                for b in BRANCHES:
+                    COORDINATORS.setdefault(b, []).append(bid)
+            COORDINATOR_IDS.extend(ids)
 
 # ── Smenalar ──
 SHIFTS = {

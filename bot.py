@@ -42,12 +42,28 @@ pending_approvals = {}
 #  HELPERS
 # ══════════════════════════════════════
 
-def is_admin(user_id: int) -> bool:
-    return user_id in config.ADMIN_IDS
-
-
 def is_coordinator(user_id: int) -> bool:
     return user_id in config.COORDINATOR_IDS
+
+
+def get_coordinator_branch(user_id: int) -> str | None:
+    """Koordinator qaysi filialga tegishli ekanini qaytaradi.
+    Agar bitta filialga biriktirilgan bo'lsa — o'sha filial.
+    Agar bir nechta yoki hech qaysiga — None."""
+    branches = []
+    for branch, ids in config.COORDINATORS.items():
+        if user_id in ids:
+            branches.append(branch)
+    return branches[0] if len(branches) == 1 else None
+
+
+def is_coordinator_for_branch(user_id: int, branch: str) -> bool:
+    """Koordinator aynan shu filialga biriktirilganmi?"""
+    return user_id in config.COORDINATORS.get(branch, [])
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in config.ADMIN_IDS
 
 
 def has_access(user_id: int) -> bool:
@@ -189,13 +205,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Coordinator yoki admin
     if has_access(user_id):
-        role_text = "Admin" if is_admin(user_id) else "Koordinator"
-        await update.message.reply_text(
-            f"🏢 *Office Attendance Bot* — {role_text}\n\n"
-            "Tugmalar yoki komandalar orqali boshqaring:",
-            parse_mode="Markdown",
-            reply_markup=keyboard.admin_keyboard(),
-        )
+        if is_admin(user_id):
+            await update.message.reply_text(
+                f"🏢 *Office Attendance Bot* — Admin\n\n"
+                "Tugmalar yoki komandalar orqali boshqaring:",
+                parse_mode="Markdown",
+                reply_markup=keyboard.admin_keyboard(),
+            )
+        else:
+            branch = get_coordinator_branch(user_id)
+            branch_label = config.BRANCHES.get(branch, branch) if branch else "Noma'lum filial"
+            await update.message.reply_text(
+                f"🏢 *Office Attendance Bot* — Koordinator\n"
+                f"📍 *{branch_label}*\n\n"
+                "Faqat o'z filialingiz hisobotini ko'rasiz:",
+                parse_mode="Markdown",
+                reply_markup=keyboard.coordinator_keyboard(branch),
+            )
         return
 
     # Oddiy xodim
@@ -242,6 +268,13 @@ async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
     shift = context.args[0] if context.args and context.args[0] in ("morning", "afternoon") else None
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_report(branch, shift=shift)
+            await update.message.reply_text(text)
+            return
     text = report.format_today_report(shift)
     await update.message.reply_text(text)
 
@@ -253,6 +286,13 @@ async def date_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Format: /date YYYY-MM-DD")
         return
     date_str = context.args[0]
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_report(branch, date_str=date_str)
+            await update.message.reply_text(text)
+            return
     text = report.format_date_report(date_str)
     await update.message.reply_text(text)
 
@@ -260,6 +300,13 @@ async def date_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_week_report(branch)
+            await update.message.reply_text(text)
+            return
     text = report.format_week_report()
     await update.message.reply_text(text)
 
@@ -267,6 +314,13 @@ async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def month_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_month_report(branch)
+            await update.message.reply_text(text)
+            return
     text = report.format_month_report()
     await update.message.reply_text(text)
 
@@ -274,6 +328,13 @@ async def month_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def late_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_late_report(branch)
+            await update.message.reply_text(text)
+            return
     text = report.format_late_report()
     await update.message.reply_text(text)
 
@@ -290,6 +351,13 @@ async def absent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         now = datetime.now(tz)
         shift = "morning" if now.hour < 14 else "afternoon"
 
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_missing_report(branch, shift)
+            await update.message.reply_text(text)
+            return
     text = report.format_missing_report(shift)
     await update.message.reply_text(text)
 
@@ -297,6 +365,18 @@ async def absent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def branch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
+    user_id = update.effective_user.id
+
+    # Koordinator faqat o'z filialini ko'radi
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            text = report.format_branch_report(branch)
+            await update.message.reply_text(text)
+            return
+        await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
+        return
+
     if not context.args:
         branches = ", ".join(config.BRANCH_LIST)
         await update.message.reply_text(f"Filiallar: {branches}")
@@ -330,6 +410,24 @@ async def employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_employees_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
+        return
+
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            employees = db.get_employees_by_branch(branch)
+            if not employees:
+                await update.message.reply_text(f"🏢 *{config.BRANCHES[branch]}* filialida xodimlar yo'q.")
+                return
+            lines = [f"👥 *Xodimlar — {config.BRANCHES[branch]}*:", ""]
+            for e in employees:
+                role = config.ROLE_LABELS.get(e["role"], e["role"])
+                shift = "Ert" if e["shift"] == "morning" else "Kech"
+                lines.append(f"  {e['telegram_id']} — {e['name']} ({role}, {shift})")
+            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            return
+        await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
         return
 
     employees = db.get_all_employees()
@@ -500,6 +598,12 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text == "🗑️ Xodimni o'chirish":
         await show_remove_employees(update, context)
     elif text == "🏢 Filiallar":
+        user_id = update.effective_user.id
+        if not is_admin(user_id):
+            branch = get_coordinator_branch(user_id)
+            if branch:
+                await show_branch_report(update, branch)
+                return
         await update.message.reply_text(
             "Filialni tanlang:",
             reply_markup=keyboard.branches_keyboard(),
@@ -513,10 +617,18 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     elif text == "🏢 Online":
         await show_branch_report(update, "online")
     elif text == "🔙 Orqaga":
-        await update.message.reply_text(
-            "Asosiy menyu:",
-            reply_markup=keyboard.admin_keyboard(),
-        )
+        user_id = update.effective_user.id
+        if is_admin(user_id):
+            await update.message.reply_text(
+                "Asosiy menyu:",
+                reply_markup=keyboard.admin_keyboard(),
+            )
+        else:
+            branch = get_coordinator_branch(user_id)
+            await update.message.reply_text(
+                "Asosiy menyu:",
+                reply_markup=keyboard.coordinator_keyboard(branch),
+            )
 
 
 async def show_branch_report(update: Update, branch: str):
@@ -533,7 +645,16 @@ async def show_remove_employees(update: Update, context: ContextTypes.DEFAULT_TY
     if not has_access(update.effective_user.id):
         return
 
-    employees = db.get_all_employees()
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            employees = db.get_employees_by_branch(branch)
+        else:
+            employees = []
+    else:
+        employees = db.get_all_employees()
+
     if not employees:
         await update.message.reply_text("Hali xodimlar qo'shilmagan.")
         return

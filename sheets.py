@@ -55,13 +55,24 @@ def _get_worksheet(sheet, name: str, headers: list[str]):
     return ws
 
 
+def _sanitize_sheet_name(name: str) -> str:
+    """Google Sheets worksheet nomi uchun tozalash (<=100 chars)."""
+    # `/`, `\`, `?`, `*`, `[`, `]`, `:` qabul qilinmaydi
+    sanitized = name.replace("/", "_").replace("\\", "_").replace("?", "")
+    sanitized = sanitized.replace("*", "").replace("[", "").replace("]", "").replace(":", "")
+    return sanitized[:100]
+
+
 def sync_employee_to_sheets(employee: dict):
-    """Bitta xodimni Sheets ga yozish."""
+    """Bitta xodimni Sheets ga yozish — filiali bo'yicha alohida worksheet ga."""
     sheet = _get_sheet()
     if not sheet:
         return
 
-    ws = _get_worksheet(sheet, "Employees", [
+    branch = employee.get("branch", "integro")
+    sheet_name = _sanitize_sheet_name(f"Xodimlar_{branch}")
+
+    ws = _get_worksheet(sheet, sheet_name, [
         "telegram_id", "name", "role", "branch", "shift", "active", "created_at"
     ])
 
@@ -70,7 +81,6 @@ def sync_employee_to_sheets(employee: dict):
     except Exception:
         all_rows = []
 
-    # Mavjud qatorni yangilash yoki yangi qo'shish
     found = False
     for i, row in enumerate(all_rows, start=2):
         if str(row.get("telegram_id", "")) == str(employee["telegram_id"]):
@@ -99,12 +109,15 @@ def sync_employee_to_sheets(employee: dict):
 
 
 def sync_attendance_to_sheets(record: dict):
-    """Bitta attendance yozuvini Sheets ga yozish."""
+    """Bitta attendance yozuvini Sheets ga yozish — filiali bo'yicha alohida."""
     sheet = _get_sheet()
     if not sheet:
         return
 
-    ws = _get_worksheet(sheet, "Attendance", [
+    branch = record.get("branch", "integro")
+    sheet_name = _sanitize_sheet_name(f"Davomat_{branch}")
+
+    ws = _get_worksheet(sheet, sheet_name, [
         "employee_id", "date", "check_in_time", "check_out_time",
         "check_in_video_id", "check_out_video_id", "status", "late_minutes",
         "name", "role", "branch", "shift"
@@ -126,38 +139,61 @@ def sync_attendance_to_sheets(record: dict):
             record.get("shift", ""),
         ])
     except Exception as e:
-        print(f"[Sheets] sync_attendance xatolik: {e}")
+        print(f"[Sheets] sync_attendance xatolik ({sheet_name}): {e}")
 
 
 def load_employees_from_sheets():
-    """Sheets dan barcha xodimlarni yuklash (bot restart da)."""
+    """Sheets dan barcha xodimlarni yuklash (bot restart da) — barcha Xodimlar_* worksheet lardan."""
     from db import add_employee
 
     sheet = _get_sheet()
     if not sheet:
         return []
 
-    try:
-        ws = _get_worksheet(sheet, "Employees", [])
-        rows = ws.get_all_records()
-    except Exception as e:
-        print(f"[Sheets] load_employees xatolik: {e}")
-        return []
-
     employees = []
-    for row in rows:
-        try:
-            tid = int(row["telegram_id"])
-            name = row["name"]
-            role = row.get("role", "office_manager")
-            branch = row.get("branch", "integro")
-            shift = row.get("shift", "morning")
-            active = int(row.get("active", 1))
 
-            if active:
-                add_employee(tid, name, role, branch, shift)
-                employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
-        except (ValueError, KeyError) as e:
-            print(f"[Sheets] Qator xatolik: {e}")
+    # Eski "Employees" worksheet dan yuklash (backward compatibility)
+    try:
+        ws = sheet.worksheet("Employees")
+        rows = ws.get_all_records()
+        for row in rows:
+            try:
+                tid = int(row["telegram_id"])
+                name = row["name"]
+                role = row.get("role", "office_manager")
+                branch = row.get("branch", "integro")
+                shift = row.get("shift", "morning")
+                active = int(row.get("active", 1))
+                if active:
+                    add_employee(tid, name, role, branch, shift)
+                    employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
+            except (ValueError, KeyError) as e:
+                print(f"[Sheets] Employees qator xatolik: {e}")
+    except gspread.exceptions.WorksheetNotFound:
+        pass
+    except Exception as e:
+        print(f"[Sheets] Employees worksheet o'qish xatolik: {e}")
+
+    # Yangi format: Xodimlar_Integro, Xodimlar_Amir Temur, ...
+    for ws in sheet.worksheets():
+        title = ws.title
+        if title.startswith("Xodimlar_"):
+            try:
+                rows = ws.get_all_records()
+                for row in rows:
+                    try:
+                        tid = int(row["telegram_id"])
+                        name = row["name"]
+                        role = row.get("role", "office_manager")
+                        branch = row.get("branch", "integro")
+                        shift = row.get("shift", "morning")
+                        active = int(row.get("active", 1))
+                        if active:
+                            add_employee(tid, name, role, branch, shift)
+                            employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
+                    except (ValueError, KeyError) as e:
+                        print(f"[Sheets] {title} qator xatolik: {e}")
+            except Exception as e:
+                print(f"[Sheets] {title} o'qish xatolik: {e}")
 
     return employees
