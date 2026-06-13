@@ -424,11 +424,19 @@ async def branch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Koordinator faqat o'z filialini ko'radi
     if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_report(branch)
-            await update.message.reply_text(text)
-            return
+        if is_coordinator(user_id):
+            branch = get_coordinator_branch(user_id)
+            if branch:
+                text = report.format_branch_report(branch)
+                await update.message.reply_text(text)
+                return
+            else:
+                # Bir nechta filial coordinatori — hammasini ko'rsatish
+                await update.message.reply_text(
+                    "Filialni tanlang:",
+                    reply_markup=keyboard.branches_keyboard(),
+                )
+                return
         await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
         return
 
@@ -469,19 +477,34 @@ async def list_employees_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            employees = db.get_employees_by_branch(branch)
-            if not employees:
-                await update.message.reply_text(f"🏢 *{config.BRANCHES[branch]}* filialida xodimlar yo'q.")
+        if is_coordinator(user_id):
+            branch = get_coordinator_branch(user_id)
+            if branch:
+                employees = db.get_employees_by_branch(branch)
+                if not employees:
+                    await update.message.reply_text(f"🏢 *{config.BRANCHES[branch]}* filialida xodimlar yo'q.")
+                    return
+                lines = [f"👥 *Xodimlar — {config.BRANCHES[branch]}*:", ""]
+                for e in employees:
+                    role = config.ROLE_LABELS.get(e["role"], e["role"])
+                    shift = "Ert" if e["shift"] == "morning" else "Kech"
+                    lines.append(f"  {e['telegram_id']} — {e['name']} ({role}, {shift})")
+                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
                 return
-            lines = [f"👥 *Xodimlar — {config.BRANCHES[branch]}*:", ""]
-            for e in employees:
-                role = config.ROLE_LABELS.get(e["role"], e["role"])
-                shift = "Ert" if e["shift"] == "morning" else "Kech"
-                lines.append(f"  {e['telegram_id']} — {e['name']} ({role}, {shift})")
-            await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-            return
+            else:
+                # Bir nechta filial coordinatori — hammasini ko'rsatish
+                employees = db.get_all_employees()
+                if not employees:
+                    await update.message.reply_text("👥 Xodimlar yo'q.")
+                    return
+                lines = ["👥 *Barcha xodimlar*:", ""]
+                for e in employees:
+                    branch = config.BRANCHES.get(e["branch"], e["branch"])
+                    role = config.ROLE_LABELS.get(e["role"], e["role"])
+                    shift = "Ert" if e["shift"] == "morning" else "Kech"
+                    lines.append(f"  {e['telegram_id']} — {e['name']} ({branch}, {role}, {shift})")
+                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+                return
         await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
         return
 
