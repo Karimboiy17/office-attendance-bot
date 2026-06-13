@@ -15,33 +15,78 @@ SCOPES = [
 _client = None
 
 
+def _parse_service_account(raw: str) -> dict | None:
+    """JSON ni turli formatlarda parse qilish (Railway da \\n muammosini hal qiladi)."""
+    # 1) To'g'ri JSON
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    # 2) \\n ni haqiqiy newline ga almashtirish
+    try:
+        fixed = raw.replace("\\n", "\n")
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # 3) Haqiqiy newline larni olib tashlash
+    try:
+        fixed = raw.replace("\n", "").replace("\r", "")
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # 4) private_key dagi \\n ni newline ga almashtirib, qolganini tekislash
+    try:
+        import re
+        fixed = re.sub(
+            r'("private_key"\s*:\s*")(.*?)(")',
+            lambda m: m.group(1) + m.group(2).replace("\\n", "\n").replace("\n", "\\n") + m.group(3),
+            raw,
+            flags=re.DOTALL,
+        )
+        return json.loads(fixed)
+    except (json.JSONDecodeError, Exception):
+        pass
+
+    return None
+
+
+def _try_auth(creds_dict: dict) -> bool:
+    """Berilgan credential dict bilan auth qilish."""
+    try:
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        global _client
+        _client = gspread.authorize(creds)
+        return True
+    except Exception as e:
+        print(f"[Sheets] Auth xatolik: {e}")
+        return False
+
+
 def _get_client():
     global _client
     if _client is not None:
         return _client
 
-    # 1) Base64 formati (ishonchli — Railway da \n muammosi yo'q)
+    # 1) Base64 (agar qo'llanilsa)
     if GOOGLE_SERVICE_ACCOUNT_B64:
         try:
             raw = base64.b64decode(GOOGLE_SERVICE_ACCOUNT_B64).decode("utf-8")
             creds_dict = json.loads(raw)
-            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-            _client = gspread.authorize(creds)
-            return _client
+            if _try_auth(creds_dict):
+                return _client
         except Exception as e:
-            print(f"[Sheets] Base64 auth xatolik: {e}")
+            print(f"[Sheets] Base64 decode xatolik: {e}")
 
-    # 2) JSON format (eskicha — \n muammosi bo'lishi mumkin)
+    # 2) JSON — bir necha formatda urinib ko'rish
     if GOOGLE_SERVICE_ACCOUNT_JSON:
-        try:
-            creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
-            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-            _client = gspread.authorize(creds)
+        creds_dict = _parse_service_account(GOOGLE_SERVICE_ACCOUNT_JSON)
+        if creds_dict and _try_auth(creds_dict):
             return _client
-        except Exception as e:
-            print(f"[Sheets] JSON auth xatolik: {e}")
 
-    print("[Sheets] Google Sheets configuratsiya qilinmagan. O'tkazib yuborildi.")
+    print("[Sheets] Google Sheets auth muvaffaqiyatsiz. Configuratsiyani tekshiring.")
     return None
 
 
