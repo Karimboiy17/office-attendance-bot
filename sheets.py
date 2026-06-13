@@ -1,10 +1,11 @@
 """Office Attendance Bot — Google Sheets Backup"""
 
+import base64
 import json
 import os
 from google.oauth2.service_account import Credentials
 import gspread
-from config import GOOGLE_SERVICE_ACCOUNT_JSON, SHEET_KEY
+from config import GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_B64, SHEET_KEY
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -19,18 +20,29 @@ def _get_client():
     if _client is not None:
         return _client
 
-    if not GOOGLE_SERVICE_ACCOUNT_JSON or not SHEET_KEY:
-        print("[Sheets] Google Sheets configuratsiya qilinmagan. O'tkazib yuborildi.")
-        return None
+    # 1) Base64 formati (ishonchli — Railway da \n muammosi yo'q)
+    if GOOGLE_SERVICE_ACCOUNT_B64:
+        try:
+            raw = base64.b64decode(GOOGLE_SERVICE_ACCOUNT_B64).decode("utf-8")
+            creds_dict = json.loads(raw)
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            _client = gspread.authorize(creds)
+            return _client
+        except Exception as e:
+            print(f"[Sheets] Base64 auth xatolik: {e}")
 
-    try:
-        creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-        _client = gspread.authorize(creds)
-        return _client
-    except Exception as e:
-        print(f"[Sheets] Auth xatolik: {e}")
-        return None
+    # 2) JSON format (eskicha — \n muammosi bo'lishi mumkin)
+    if GOOGLE_SERVICE_ACCOUNT_JSON:
+        try:
+            creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+            creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+            _client = gspread.authorize(creds)
+            return _client
+        except Exception as e:
+            print(f"[Sheets] JSON auth xatolik: {e}")
+
+    print("[Sheets] Google Sheets configuratsiya qilinmagan. O'tkazib yuborildi.")
+    return None
 
 
 def _get_sheet():

@@ -76,6 +76,7 @@ WORK_DAYS = [0, 1, 2, 3, 4, 5]  # Mon=0, Tue=1, ..., Sat=5 (Yakshanba dam)
 
 # ── Google Sheets ──
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+GOOGLE_SERVICE_ACCOUNT_B64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_B64", "")
 SHEET_KEY = os.getenv("SHEET_KEY", "")
 
 # ── Vaqt mintaqasi ──
