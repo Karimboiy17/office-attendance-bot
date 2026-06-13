@@ -137,10 +137,10 @@ def get_employees_by_branch(branch: str) -> list[dict]:
 
 def update_employee_work_time(employee_id: int, field: str, time_str: str) -> bool:
     """Xodimning custom_work_start yoki custom_work_end ni doimiy o'zgartirish.
-    field: 'check_in' -> custom_work_start, 'check_out' -> custom_work_end
+    field: 'checkin' -> custom_work_start, 'checkout' -> custom_work_end
     Agar time_str='clear' bo'lsa, custom qiymatni o'chirib, default shift ga qaytaradi.
     """
-    column = "custom_work_start" if field == "check_in" else "custom_work_end"
+    column = "custom_work_start" if field == "checkin" else "custom_work_end"
     conn = get_conn()
     try:
         if time_str == "clear":

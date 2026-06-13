@@ -877,7 +877,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_field"] = field
 
         kb = keyboard.edit_hour_keyboard(emp_id, field)
-        field_label = "kelish" if field == "check_in" else "ketish"
+        field_label = "kelish" if field == "checkin" else "ketish"
         await query.edit_message_text(
             f"🕐 *{field_label.capitalize()} vaqti* — soatni tanlang:",
             parse_mode="Markdown",
@@ -893,7 +893,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         emp = db.get_employee(emp_id)
         name = emp["name"] if emp else str(emp_id)
-        field_label = "kelish" if field == "check_in" else "ketish"
+        field_label = "kelish" if field == "checkin" else "ketish"
 
         success = db.update_employee_work_time(emp_id, field, "clear")
         if success:
@@ -917,7 +917,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["edit_hour"] = hour
 
         kb = keyboard.edit_minute_keyboard(emp_id, field, hour)
-        field_label = "kelish" if field == "check_in" else "ketish"
+        field_label = "kelish" if field == "checkin" else "ketish"
         await query.edit_message_text(
             f"🕐 *{field_label.capitalize()} vaqti* — {hour}:XX\nDaqiqani tanlang:",
             parse_mode="Markdown",
@@ -938,7 +938,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Saqlash (doimiy — employees table)
         success = db.update_employee_work_time(emp_id, field, time_str)
         if success:
-            field_label = "kelish" if field == "check_in" else "ketish"
+            field_label = "kelish" if field == "checkin" else "ketish"
             await query.edit_message_text(
                 f"✅ *{name}* — {field_label} vaqti doimiy ravishda `{time_str}` ga o'zgartirildi!\n\n"
                 f"Endi har kuni shu vaqt asosiy hisoblanadi.",

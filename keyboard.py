@@ -111,14 +111,14 @@ def edit_shift_keyboard(emp_id: int, current_start: str = None, current_end: str
         btn_out += " (default)"
 
     kb = [
-        [InlineKeyboardButton(btn_in, callback_data=f"editfield_{emp_id}_check_in")],
-        [InlineKeyboardButton(btn_out, callback_data=f"editfield_{emp_id}_check_out")],
+        [InlineKeyboardButton(btn_in, callback_data=f"editfield_{emp_id}_checkin")],
+        [InlineKeyboardButton(btn_out, callback_data=f"editfield_{emp_id}_checkout")],
     ]
     # Agar custom vaqt mavjud bo'lsa, "default ga qaytarish" tugmasi
     if current_start:
-        kb.append([InlineKeyboardButton("↩️ Kelishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_check_in")])
+        kb.append([InlineKeyboardButton("↩️ Kelishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_checkin")])
     if current_end:
-        kb.append([InlineKeyboardButton("↩️ Ketishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_check_out")])
+        kb.append([InlineKeyboardButton("↩️ Ketishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_checkout")])
     kb.append([InlineKeyboardButton("🔙 Orqaga", callback_data="editcancel")])
     return InlineKeyboardMarkup(kb)
 
