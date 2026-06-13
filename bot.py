@@ -965,7 +965,7 @@ def main():
         "📅 Bugun", "📊 Haftalik", "📆 Oylik",
         "⚠️ Kechikkanlar", "❌ Kelmaganlar",
         "👥 Xodimlar", "🏢 Filiallar", "🗑️ Xodimni o'chirish",
-        "🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar",
+        "🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online",
         "🔙 Orqaga",
         # Xodim tugmalari
         "👤 Mening ma'lumotim", "📋 Qanday ishlatish?",
