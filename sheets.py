@@ -262,8 +262,8 @@ def load_employees_from_sheets():
                 shift = row.get("shift", "morning")
                 active = int(row.get("active", 1))
                 if active:
-                    cws = row.get("custom_work_start", "") or ""
-                    cwe = row.get("custom_work_end", "") or ""
+                    cws = row.get("custom_work_start", "") or None
+                    cwe = row.get("custom_work_end", "") or None
                     add_employee(tid, name, role, branch, shift, cws, cwe)
                     employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
             except (ValueError, KeyError) as e:
@@ -288,8 +288,8 @@ def load_employees_from_sheets():
                         shift = row.get("shift", "morning")
                         active = int(row.get("active", 1))
                         if active:
-                            cws = row.get("custom_work_start", "") or ""
-                            cwe = row.get("custom_work_end", "") or ""
+                            cws = row.get("custom_work_start", "") or None
+                            cwe = row.get("custom_work_end", "") or None
                             add_employee(tid, name, role, branch, shift, cws, cwe)
                             employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
                     except (ValueError, KeyError) as e:

@@ -88,10 +88,10 @@ def add_employee(telegram_id: int, name: str, role: str = "office_manager",
             """, (name, role, branch, shift, telegram_id))
             
             # Agar Sheets dan custom vaqt kelgan bo'lsa, uni ham yangilaymiz
-            if custom_work_start is not None:
+            if custom_work_start is not None and custom_work_start != "":
                 conn.execute("UPDATE employees SET custom_work_start = ? WHERE telegram_id = ?",
                              (custom_work_start, telegram_id))
-            if custom_work_end is not None:
+            if custom_work_end is not None and custom_work_end != "":
                 conn.execute("UPDATE employees SET custom_work_end = ? WHERE telegram_id = ?",
                              (custom_work_end, telegram_id))
         else:
