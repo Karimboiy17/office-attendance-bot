@@ -97,9 +97,11 @@ def add_employee(telegram_id: int, name: str, role: str = "office_manager",
         else:
             # Yangi xodim
             conn.execute("""
-                INSERT INTO employees (telegram_id, name, role, branch, shift, active)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, (telegram_id, name, role, branch, shift))
+                INSERT INTO employees (telegram_id, name, role, branch, shift, active,
+                                       custom_work_start, custom_work_end)
+                VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            """, (telegram_id, name, role, branch, shift,
+                  custom_work_start, custom_work_end))
         conn.commit()
         return True
     except Exception as e:
