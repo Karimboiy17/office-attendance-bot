@@ -221,6 +221,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏢 Integro", callback_data="regbranch_integro")],
         [InlineKeyboardButton("🏢 Amir Temur", callback_data="regbranch_amir_temur")],
         [InlineKeyboardButton("🏢 Xalqlar", callback_data="regbranch_xalqlar")],
+        [InlineKeyboardButton("💻 Online", callback_data="regbranch_online")],
     ])
 
     await update.message.reply_text(
@@ -509,6 +510,8 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await show_branch_report(update, "amir_temur")
     elif text == "🏢 Xalqlar":
         await show_branch_report(update, "xalqlar")
+    elif text == "🏢 Online":
+        await show_branch_report(update, "online")
     elif text == "🔙 Orqaga":
         await update.message.reply_text(
             "Asosiy menyu:",

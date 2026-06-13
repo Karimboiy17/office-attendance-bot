@@ -19,6 +19,7 @@ BRANCHES = {
     "integro": "Integro",
     "amir_temur": "Amir Temur",
     "xalqlar": "Xalqlar Do'stligi",
+    "online": "Online",
 }
 
 BRANCH_LIST = list(BRANCHES.keys())
