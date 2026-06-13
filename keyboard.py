@@ -82,7 +82,8 @@ def edit_employees_keyboard(employees: list[dict]):
         from config import BRANCHES, ROLE_LABELS
         branch = BRANCHES.get(emp["branch"], emp["branch"])
         role = ROLE_LABELS.get(emp["role"], emp["role"])
-        shift_label = f" ({emp.get('custom_work_start','')[:5] or 'default'})"
+        custom_start = emp.get('custom_work_start')
+        shift_label = f" ({custom_start[:5] if custom_start else 'default'})"
         label = f"🕐 {emp['name']} ({branch})"
         buttons.append([InlineKeyboardButton(
             label,
