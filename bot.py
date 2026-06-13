@@ -1333,7 +1333,6 @@ def main():
     if sheets_ok:
         logger.info("✅ Google Sheets auth muvaffaqiyatli!")
         sheets.load_employees_from_sheets()
-        sheets.sync_deletions_from_sheets()
     else:
         logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
 
