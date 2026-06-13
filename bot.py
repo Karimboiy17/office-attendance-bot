@@ -897,6 +897,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         success = db.update_employee_work_time(emp_id, field, "clear")
         if success:
+            sheets.sync_employee_custom_time_to_sheets(emp_id, field, "clear")
             await query.edit_message_text(
                 f"✅ *{name}* — {field_label} vaqti default shift ga qaytarildi!",
                 parse_mode="Markdown",
@@ -938,6 +939,7 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Saqlash (doimiy — employees table)
         success = db.update_employee_work_time(emp_id, field, time_str)
         if success:
+            sheets.sync_employee_custom_time_to_sheets(emp_id, field, time_str)
             field_label = "kelish" if field == "checkin" else "ketish"
             await query.edit_message_text(
                 f"✅ *{name}* — {field_label} vaqti doimiy ravishda `{time_str}` ga o'zgartirildi!\n\n"

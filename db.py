@@ -68,7 +68,9 @@ def init_db():
 # ── Employees CRUD ──
 
 def add_employee(telegram_id: int, name: str, role: str = "office_manager",
-                 branch: str = "integro", shift: str = "morning") -> bool:
+                 branch: str = "integro", shift: str = "morning",
+                 custom_work_start: str | None = None,
+                 custom_work_end: str | None = None) -> bool:
     conn = get_conn()
     try:
         # Avval mavjudligini tekshiramiz
@@ -84,6 +86,14 @@ def add_employee(telegram_id: int, name: str, role: str = "office_manager",
                 SET name = ?, role = ?, branch = ?, shift = ?, active = 1
                 WHERE telegram_id = ?
             """, (name, role, branch, shift, telegram_id))
+            
+            # Agar Sheets dan custom vaqt kelgan bo'lsa, uni ham yangilaymiz
+            if custom_work_start is not None:
+                conn.execute("UPDATE employees SET custom_work_start = ? WHERE telegram_id = ?",
+                             (custom_work_start, telegram_id))
+            if custom_work_end is not None:
+                conn.execute("UPDATE employees SET custom_work_end = ? WHERE telegram_id = ?",
+                             (custom_work_end, telegram_id))
         else:
             # Yangi xodim
             conn.execute("""

@@ -130,7 +130,8 @@ def sync_employee_to_sheets(employee: dict):
     sheet_name = _sanitize_sheet_name(f"Xodimlar_{branch}")
 
     ws = _get_worksheet(sheet, sheet_name, [
-        "telegram_id", "name", "role", "branch", "shift", "active", "created_at"
+        "telegram_id", "name", "role", "branch", "shift", "active", "created_at",
+        "custom_work_start", "custom_work_end",
     ])
 
     try:
@@ -141,7 +142,7 @@ def sync_employee_to_sheets(employee: dict):
     found = False
     for i, row in enumerate(all_rows, start=2):
         if str(row.get("telegram_id", "")) == str(employee["telegram_id"]):
-            ws.update(f"A{i}:G{i}", [[
+            ws.update(f"A{i}:I{i}", [[
                 str(employee["telegram_id"]),
                 employee["name"],
                 employee.get("role", "office_manager"),
@@ -149,6 +150,8 @@ def sync_employee_to_sheets(employee: dict):
                 employee.get("shift", "morning"),
                 str(employee.get("active", 1)),
                 employee.get("created_at", ""),
+                employee.get("custom_work_start", ""),
+                employee.get("custom_work_end", ""),
             ]])
             found = True
             break
@@ -162,7 +165,44 @@ def sync_employee_to_sheets(employee: dict):
             employee.get("shift", "morning"),
             str(employee.get("active", 1)),
             employee.get("created_at", ""),
+            employee.get("custom_work_start", ""),
+            employee.get("custom_work_end", ""),
         ])
+
+
+def sync_employee_custom_time_to_sheets(employee_id: int, field: str, time_str: str):
+    """Custom work vaqtini Google Sheets ga yozish (restartda saqlanib qolishi uchun)."""
+    from db import get_employee
+    emp = get_employee(employee_id)
+    if not emp:
+        return
+
+    sheet = _get_sheet()
+    if not sheet:
+        return
+
+    branch = emp.get("branch", "integro")
+    sheet_name = _sanitize_sheet_name(f"Xodimlar_{branch}")
+    try:
+        ws = sheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return
+
+    try:
+        all_rows = ws.get_all_records()
+    except Exception:
+        return
+
+    column = "custom_work_start" if field == "checkin" else "custom_work_end"
+    col_idx = 7 if field == "checkin" else 8  # 0-indexed: H=7, I=8
+    value = "" if time_str == "clear" else time_str
+
+    for i, row in enumerate(all_rows, start=2):
+        if str(row.get("telegram_id", "")) == str(employee_id):
+            # A:I = 9 columns, update only the custom time column
+            cell_col = chr(ord('H') + (0 if field == "checkin" else 1))
+            ws.update(f"{cell_col}{i}", [[value]])
+            break
 
 
 def sync_attendance_to_sheets(record: dict):
@@ -222,7 +262,9 @@ def load_employees_from_sheets():
                 shift = row.get("shift", "morning")
                 active = int(row.get("active", 1))
                 if active:
-                    add_employee(tid, name, role, branch, shift)
+                    cws = row.get("custom_work_start", "") or ""
+                    cwe = row.get("custom_work_end", "") or ""
+                    add_employee(tid, name, role, branch, shift, cws, cwe)
                     employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
             except (ValueError, KeyError) as e:
                 print(f"[Sheets] Employees qator xatolik: {e}")
@@ -246,7 +288,9 @@ def load_employees_from_sheets():
                         shift = row.get("shift", "morning")
                         active = int(row.get("active", 1))
                         if active:
-                            add_employee(tid, name, role, branch, shift)
+                            cws = row.get("custom_work_start", "") or ""
+                            cwe = row.get("custom_work_end", "") or ""
+                            add_employee(tid, name, role, branch, shift, cws, cwe)
                             employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
                     except (ValueError, KeyError) as e:
                         print(f"[Sheets] {title} qator xatolik: {e}")
