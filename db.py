@@ -53,6 +53,14 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_attendance_status
             ON attendance(status);
     """)
+
+    # Migration: custom work times (agar column mavjud bo'lmasa)
+    for col in ["custom_work_start", "custom_work_end"]:
+        try:
+            conn.execute(f"ALTER TABLE employees ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -127,6 +135,33 @@ def get_employees_by_branch(branch: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def update_employee_work_time(employee_id: int, field: str, time_str: str) -> bool:
+    """Xodimning custom_work_start yoki custom_work_end ni doimiy o'zgartirish.
+    field: 'check_in' -> custom_work_start, 'check_out' -> custom_work_end
+    Agar time_str='clear' bo'lsa, custom qiymatni o'chirib, default shift ga qaytaradi.
+    """
+    column = "custom_work_start" if field == "check_in" else "custom_work_end"
+    conn = get_conn()
+    try:
+        if time_str == "clear":
+            conn.execute(
+                f"UPDATE employees SET {column} = NULL WHERE telegram_id = ?",
+                (employee_id,)
+            )
+        else:
+            conn.execute(
+                f"UPDATE employees SET {column} = ? WHERE telegram_id = ?",
+                (time_str, employee_id)
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[DB] update_employee_work_time error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
 # ── Attendance CRUD ──
 
 GRACE_MINUTES = 5  # 5 daqiqa kechikishga ruxsat (hali on_time)
@@ -141,13 +176,20 @@ def validate_checkin_time(emp: dict) -> dict | None:
     """
     from config import SHIFTS
     now = datetime.now(tz)
-    shift_cfg = SHIFTS.get(emp["shift"])
-    if not shift_cfg:
-        return {"valid": True, "late_minutes": 0, "status": "on_time"}
-
-    start_hour = shift_cfg["start"]
     total_now = now.hour * 60 + now.minute
-    total_start = start_hour * 60
+
+    # Custom work start mavjudmi?
+    if emp.get("custom_work_start"):
+        parts = emp["custom_work_start"].split(":")
+        start_hour = int(parts[0])
+        start_min = int(parts[1])
+        total_start = start_hour * 60 + start_min
+    else:
+        shift_cfg = SHIFTS.get(emp["shift"])
+        if not shift_cfg:
+            return {"valid": True, "late_minutes": 0, "status": "on_time"}
+        start_hour = shift_cfg["start"]
+        total_start = start_hour * 60
 
     # Juda erta — ruxsat yo'q
     if total_now < total_start - MAX_EARLY_MINUTES:

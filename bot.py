@@ -792,7 +792,7 @@ async def show_edit_time_employees(update: Update, context: ContextTypes.DEFAULT
 
 
 async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ish vaqtini tahrirlash uchun callback flow handler."""
+    """Ish vaqtini tahrirlash uchun callback flow handler (DOIMIY — shift vaqti)."""
     query = update.callback_query
     await query.answer()
 
@@ -804,74 +804,79 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Bekor qilish ──
     if data == "editcancel":
-        if is_admin(user_id):
-            await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
-        else:
-            await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
+        await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
         return
 
     # ── Xodimni tanlash ──
     if data.startswith("editemp_"):
         emp_id = int(data[8:])
         context.user_data["edit_emp_id"] = emp_id
-        context.user_data["edit_emp_name"] = db.get_employee(emp_id)["name"]
-        kb = keyboard.edit_date_keyboard(emp_id)
-        await query.edit_message_text(
-            f"👤 *{context.user_data['edit_emp_name']}* — sanani tanlang:",
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-        return
-
-    # ── Sanani tanlash (bugun/kecha/boshqa) ──
-    if data.startswith("editdate_"):
-        parts = data.split("_", 2)  # editdate_EMPID_DATE
-        emp_id = int(parts[1])
-        date_str = parts[2]
-        context.user_data["edit_date"] = date_str
-        context.user_data["edit_emp_id"] = emp_id
-
         emp = db.get_employee(emp_id)
-        record = db.get_attendance_record(emp_id, date_str)
-        current_in = record.get("check_in_time", "") if record else ""
-        current_out = record.get("check_out_time", "") if record else ""
+        if not emp:
+            await query.edit_message_text("❌ Xodim topilmadi.")
+            return
 
-        kb = keyboard.edit_field_keyboard(emp_id, date_str, current_in, current_out)
-        name = emp["name"] if emp else str(emp_id)
-        msg = f"👤 *{name}* — {date_str}\n\n"
-        if current_in:
-            msg += f"🕐 Kelish: `{current_in[:5]}`\n"
-        else:
-            msg += "🕐 Kelish: —\n"
-        if current_out:
-            msg += f"🚶 Ketish: `{current_out[:5]}`\n"
-        else:
-            msg += "🚶 Ketish: —\n"
+        name = emp["name"]
+        current_start = emp.get("custom_work_start")
+        current_end = emp.get("custom_work_end")
+
+        from config import SHIFTS
+        default_shift = SHIFTS.get(emp["shift"], {})
+        default_start = f"{default_shift.get('start', '?'):02d}:00"
+        default_end = f"{default_shift.get('end', '?'):02d}:00"
+
+        msg = (
+            f"👤 *{name}*\n\n"
+            f"📌 Joriy sozlamalar:\n"
+            f"   🕐 Kelish: `{current_start or default_start}`\n"
+            f"   🚶 Ketish: `{current_end or default_end}`\n"
+        )
+        if current_start or current_end:
+            msg += "\n_*italic* = custom, `bold` = default shift_\n"
         msg += "\nQaysi vaqtni o'zgartirmoqchisiz?"
+
+        kb = keyboard.edit_shift_keyboard(emp_id, current_start, current_end)
         await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
         return
 
-    # ── Boshqa sana kiritish ──
-    if data.startswith("editdateother_"):
-        emp_id = int(data[14:])
+    # ── Shift ga qaytish ──
+    if data.startswith("editshift_"):
+        emp_id = int(data[10:])
         context.user_data["edit_emp_id"] = emp_id
-        context.user_data["awaiting_date"] = True
-        await query.edit_message_text(
-            "✏️ *Sanani YYYY-MM-DD formatida kiriting:*\n\n"
-            "Misol: 2026-06-13",
-            parse_mode="Markdown",
+        emp = db.get_employee(emp_id)
+        if not emp:
+            await query.edit_message_text("❌ Xodim topilmadi.")
+            return
+
+        name = emp["name"]
+        current_start = emp.get("custom_work_start")
+        current_end = emp.get("custom_work_end")
+
+        from config import SHIFTS
+        default_shift = SHIFTS.get(emp["shift"], {})
+        default_start = f"{default_shift.get('start', '?'):02d}:00"
+        default_end = f"{default_shift.get('end', '?'):02d}:00"
+
+        msg = (
+            f"👤 *{name}*\n\n"
+            f"📌 Joriy sozlamalar:\n"
+            f"   🕐 Kelish: `{current_start or default_start}`\n"
+            f"   🚶 Ketish: `{current_end or default_end}`\n"
+            f"\nQaysi vaqtni o'zgartirmoqchisiz?"
         )
+        kb = keyboard.edit_shift_keyboard(emp_id, current_start, current_end)
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
         return
 
     # ── Field tanlash (check_in / check_out) ──
     if data.startswith("editfield_"):
-        parts = data.split("_", 3)  # editfield_EMPID_DATE_FIELD
+        parts = data.split("_", 2)  # editfield_EMPID_FIELD
         emp_id = int(parts[1])
-        date_str = parts[2]
-        field = parts[3]
+        field = parts[2]
+        context.user_data["edit_emp_id"] = emp_id
         context.user_data["edit_field"] = field
 
-        kb = keyboard.edit_hour_keyboard(emp_id, date_str, field)
+        kb = keyboard.edit_hour_keyboard(emp_id, field)
         field_label = "kelish" if field == "check_in" else "ketish"
         await query.edit_message_text(
             f"🕐 *{field_label.capitalize()} vaqti* — soatni tanlang:",
@@ -880,16 +885,38 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ── Default ga qaytarish ──
+    if data.startswith("editdefault_"):
+        parts = data.split("_", 2)  # editdefault_EMPID_FIELD
+        emp_id = int(parts[1])
+        field = parts[2]
+
+        emp = db.get_employee(emp_id)
+        name = emp["name"] if emp else str(emp_id)
+        field_label = "kelish" if field == "check_in" else "ketish"
+
+        success = db.update_employee_work_time(emp_id, field, "clear")
+        if success:
+            await query.edit_message_text(
+                f"✅ *{name}* — {field_label} vaqti default shift ga qaytarildi!",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text(
+                "❌ *Xatolik:* Qaytarishda muammo yuz berdi.",
+                parse_mode="Markdown",
+            )
+        return
+
     # ── Soat tanlash (24 soat) ──
     if data.startswith("edithour_"):
-        parts = data.split("_", 4)  # edithour_EMPID_DATE_FIELD_HOUR
+        parts = data.split("_", 3)  # edithour_EMPID_FIELD_HOUR
         emp_id = int(parts[1])
-        date_str = parts[2]
-        field = parts[3]
-        hour = parts[4]
+        field = parts[2]
+        hour = parts[3]
         context.user_data["edit_hour"] = hour
 
-        kb = keyboard.edit_minute_keyboard(emp_id, date_str, field, hour)
+        kb = keyboard.edit_minute_keyboard(emp_id, field, hour)
         field_label = "kelish" if field == "check_in" else "ketish"
         await query.edit_message_text(
             f"🕐 *{field_label.capitalize()} vaqti* — {hour}:XX\nDaqiqani tanlang:",
@@ -898,63 +925,25 @@ async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Vaqtni saqlash ──
+    # ── Vaqtni saqlash (doimiy) ──
     if data.startswith("edittime_"):
-        parts = data.split("_", 4)  # edittime_EMPID_DATE_FIELD_TIME
+        parts = data.split("_", 3)  # edittime_EMPID_FIELD_TIME
         emp_id = int(parts[1])
-        date_str = parts[2]
-        field = parts[3]
-        time_str = parts[4]  # HH:MM
+        field = parts[2]
+        time_str = parts[3]  # HH:MM
 
         emp = db.get_employee(emp_id)
         name = emp["name"] if emp else str(emp_id)
 
-        # Validatsiya
-        if field == "check_out":
-            # Check-in mavjudligini tekshirish
-            record = db.get_attendance_record(emp_id, date_str)
-            if record and record.get("check_in_time"):
-                if time_str <= record["check_in_time"]:
-                    await query.edit_message_text(
-                        f"❌ *Xatolik:* Ketish vaqti ({time_str}) kelish vaqtidan ({record['check_in_time'][:5]}) "
-                        f"keyin bo'lishi kerak!\n\nQaytadan urinib ko'ring.",
-                        parse_mode="Markdown",
-                    )
-                    return
-            # Agar check-in bo'lmasa, check-out ni saqlash mumkin
-
-        # Saqlash
-        success = db.update_attendance_time(emp_id, date_str, field, time_str)
+        # Saqlash (doimiy — employees table)
+        success = db.update_employee_work_time(emp_id, field, time_str)
         if success:
             field_label = "kelish" if field == "check_in" else "ketish"
-            msg = (
-                f"✅ *{name}* uchun {date_str} sanadagi {field_label} vaqti\n"
-                f"`{time_str}` ga o'zgartirildi!"
+            await query.edit_message_text(
+                f"✅ *{name}* — {field_label} vaqti doimiy ravishda `{time_str}` ga o'zgartirildi!\n\n"
+                f"Endi har kuni shu vaqt asosiy hisoblanadi.",
+                parse_mode="Markdown",
             )
-
-            # Agar check_in o'rnatilgan bo'lsa, status ni qayta hisoblash
-            if field == "check_in":
-                record = db.get_attendance_record(emp_id, date_str)
-                if record and record.get("check_in_time"):
-                    shift_config = None
-                    if emp:
-                        shift_config = config.SHIFTS.get(emp.get("shift"))
-
-                    # Statusni yangilash
-                    if shift_config:
-                        check_time = record["check_in_time"]
-                        shift_start = shift_config["start"]
-                        # 15 min tolerance
-                        from datetime import datetime, timedelta
-                        start_dt = datetime.strptime(shift_start, "%H:%M")
-                        check_dt = datetime.strptime(check_time[:5], "%H:%M")
-                        late_min = int((check_dt - start_dt).total_seconds() / 60)
-                        if late_min <= 15:
-                            db._update_status(emp_id, date_str, "on_time", 0)
-                        else:
-                            db._update_status(emp_id, date_str, "late", late_min)
-
-            await query.edit_message_text(msg, parse_mode="Markdown")
         else:
             await query.edit_message_text(
                 "❌ *Xatolik:* Vaqtni saqlashda muammo yuz berdi.",
@@ -1217,45 +1206,6 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ro'yxatdan o'tish va admin tasdiqlash vaqtida ism matnini qabul qilish."""
     user_id = update.effective_user.id
-
-    # ── Ish vaqtini tahrirlash — boshqa sana kiritish ──
-    if context.user_data.get("awaiting_date") and context.user_data.get("edit_emp_id"):
-        text = update.message.text.strip()
-        # YYYY-MM-DD formatini tekshirish
-        import re
-        if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
-            emp_id = context.user_data["edit_emp_id"]
-            date_str = text
-            context.user_data.pop("awaiting_date", None)
-            context.user_data["edit_date"] = date_str
-
-            emp = db.get_employee(emp_id)
-            record = db.get_attendance_record(emp_id, date_str)
-            current_in = record.get("check_in_time", "") if record else ""
-            current_out = record.get("check_out_time", "") if record else ""
-
-            from keyboard import edit_field_keyboard
-            kb = edit_field_keyboard(emp_id, date_str, current_in, current_out)
-            name = emp["name"] if emp else str(emp_id)
-            msg = f"👤 *{name}* — {date_str}\n\n"
-            if current_in:
-                msg += f"🕐 Kelish: `{current_in[:5]}`\n"
-            else:
-                msg += "🕐 Kelish: —\n"
-            if current_out:
-                msg += f"🚶 Ketish: `{current_out[:5]}`\n"
-            else:
-                msg += "🚶 Ketish: —\n"
-            msg += "\nQaysi vaqtni o'zgartirmoqchisiz?"
-            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
-        else:
-            await update.message.reply_text(
-                "❌ *Noto'g'ri format!*\n\n"
-                "Sanani *YYYY-MM-DD* formatida yozing.\n"
-                "Misol: `2026-06-13`",
-                parse_mode="Markdown",
-            )
-        return
 
     # Admin tasdiqlash jarayonida — ism kiritish
     if user_id in pending_approvals:

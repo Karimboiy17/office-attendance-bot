@@ -71,7 +71,7 @@ def employees_list_keyboard(employees: list[dict]):
     return InlineKeyboardMarkup(buttons)
 
 
-# ── Ish vaqtini tahrirlash uchun keyboardlar ──
+# ── Ish vaqtini tahrirlash (doimiy) ──
 
 def edit_employees_keyboard(employees: list[dict]):
     """Ish vaqtini tahrirlash uchun xodimlar ro'yxati — inline tugmalar."""
@@ -82,8 +82,8 @@ def edit_employees_keyboard(employees: list[dict]):
         from config import BRANCHES, ROLE_LABELS
         branch = BRANCHES.get(emp["branch"], emp["branch"])
         role = ROLE_LABELS.get(emp["role"], emp["role"])
-        shift = "Ert" if emp["shift"] == "morning" else "Kech"
-        label = f"🕐 {emp['name']} ({branch}, {role}, {shift})"
+        shift_label = f" ({emp.get('custom_work_start','')[:5] or 'default'})"
+        label = f"🕐 {emp['name']} ({branch})"
         buttons.append([InlineKeyboardButton(
             label,
             callback_data=f"editemp_{emp['telegram_id']}"
@@ -92,47 +92,37 @@ def edit_employees_keyboard(employees: list[dict]):
     return InlineKeyboardMarkup(buttons)
 
 
-def edit_date_keyboard(emp_id: int):
-    """Sana tanlash — bugun, kecha yoki boshqa sana."""
-    from datetime import datetime, timedelta
-    import pytz
-    from config import TIMEZONE
+def edit_shift_keyboard(emp_id: int, current_start: str = None, current_end: str = None):
+    """Kelish/Ketish/Default tanlash — doimiy shift vaqtini tahrirlash."""
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-
-    tz = pytz.timezone(TIMEZONE)
-    now = datetime.now(tz)
-    today = now.strftime("%Y-%m-%d")
-    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
-
-    kb = [
-        [InlineKeyboardButton(f"📅 Bugun ({today})", callback_data=f"editdate_{emp_id}_{today}")],
-        [InlineKeyboardButton(f"📅 Kecha ({yesterday})", callback_data=f"editdate_{emp_id}_{yesterday}")],
-        [InlineKeyboardButton("✏️ Boshqa sana", callback_data=f"editdateother_{emp_id}")],
-        [InlineKeyboardButton("🔙 Orqaga", callback_data="editcancel")],
-    ]
-    return InlineKeyboardMarkup(kb)
-
-
-def edit_field_keyboard(emp_id: int, date_str: str, current_check_in: str = None, current_check_out: str = None):
-    """Check-in yoki check-out tanlash uchun inline keyboard."""
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    from config import SHIFTS
 
     btn_in = f"🕐 Kelish vaqti"
-    if current_check_in:
-        btn_in += f" ({current_check_in[:5]})"
+    if current_start:
+        btn_in += f" ({current_start[:5]})"
+    else:
+        btn_in += " (default)"
+
     btn_out = f"🚶 Ketish vaqti"
-    if current_check_out:
-        btn_out += f" ({current_check_out[:5]})"
+    if current_end:
+        btn_out += f" ({current_end[:5]})"
+    else:
+        btn_out += " (default)"
 
     kb = [
-        [InlineKeyboardButton(btn_in, callback_data=f"editfield_{emp_id}_{date_str}_check_in")],
-        [InlineKeyboardButton(btn_out, callback_data=f"editfield_{emp_id}_{date_str}_check_out")],
-        [InlineKeyboardButton("🔙 Orqaga", callback_data=f"editdate_{emp_id}_{date_str}")],
+        [InlineKeyboardButton(btn_in, callback_data=f"editfield_{emp_id}_check_in")],
+        [InlineKeyboardButton(btn_out, callback_data=f"editfield_{emp_id}_check_out")],
     ]
+    # Agar custom vaqt mavjud bo'lsa, "default ga qaytarish" tugmasi
+    if current_start:
+        kb.append([InlineKeyboardButton("↩️ Kelishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_check_in")])
+    if current_end:
+        kb.append([InlineKeyboardButton("↩️ Ketishni default ga qaytarish", callback_data=f"editdefault_{emp_id}_check_out")])
+    kb.append([InlineKeyboardButton("🔙 Orqaga", callback_data="editcancel")])
     return InlineKeyboardMarkup(kb)
 
 
-def edit_hour_keyboard(emp_id: int, date_str: str, field: str):
+def edit_hour_keyboard(emp_id: int, field: str):
     """24 soat — inline tugmalar (3 qator x 8)."""
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -142,25 +132,25 @@ def edit_hour_keyboard(emp_id: int, date_str: str, field: str):
         for h in range(i, i + 8):
             row.append(InlineKeyboardButton(
                 f"{h:02d}",
-                callback_data=f"edithour_{emp_id}_{date_str}_{field}_{h:02d}"
+                callback_data=f"edithour_{emp_id}_{field}_{h:02d}"
             ))
         rows.append(row)
-    rows.append([InlineKeyboardButton("🔙 Orqaga", callback_data=f"editfield_{emp_id}_{date_str}_{field}")])
+    rows.append([InlineKeyboardButton("🔙 Orqaga", callback_data=f"editshift_{emp_id}")])
     return InlineKeyboardMarkup(rows)
 
 
-def edit_minute_keyboard(emp_id: int, date_str: str, field: str, hour: str):
+def edit_minute_keyboard(emp_id: int, field: str, hour: str):
     """Daqiqa tanlash — 00, 15, 30, 45."""
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
     kb = [
         [
-            InlineKeyboardButton(":00", callback_data=f"edittime_{emp_id}_{date_str}_{field}_{hour}:00"),
-            InlineKeyboardButton(":15", callback_data=f"edittime_{emp_id}_{date_str}_{field}_{hour}:15"),
-            InlineKeyboardButton(":30", callback_data=f"edittime_{emp_id}_{date_str}_{field}_{hour}:30"),
-            InlineKeyboardButton(":45", callback_data=f"edittime_{emp_id}_{date_str}_{field}_{hour}:45"),
+            InlineKeyboardButton(":00", callback_data=f"edittime_{emp_id}_{field}_{hour}:00"),
+            InlineKeyboardButton(":15", callback_data=f"edittime_{emp_id}_{field}_{hour}:15"),
+            InlineKeyboardButton(":30", callback_data=f"edittime_{emp_id}_{field}_{hour}:30"),
+            InlineKeyboardButton(":45", callback_data=f"edittime_{emp_id}_{field}_{hour}:45"),
         ],
-        [InlineKeyboardButton("🔙 Orqaga", callback_data=f"edithour_{emp_id}_{date_str}_{field}_{hour}")],
+        [InlineKeyboardButton("🔙 Orqaga", callback_data=f"edithour_{emp_id}_{field}_{hour}")],
     ]
     return InlineKeyboardMarkup(kb)
 
