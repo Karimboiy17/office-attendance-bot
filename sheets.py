@@ -1,0 +1,163 @@
+"""Office Attendance Bot — Google Sheets Backup"""
+
+import json
+import os
+from google.oauth2.service_account import Credentials
+import gspread
+from config import GOOGLE_SERVICE_ACCOUNT_JSON, SHEET_KEY
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.file",
+]
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is not None:
+        return _client
+
+    if not GOOGLE_SERVICE_ACCOUNT_JSON or not SHEET_KEY:
+        print("[Sheets] Google Sheets configuratsiya qilinmagan. O'tkazib yuborildi.")
+        return None
+
+    try:
+        creds_dict = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        _client = gspread.authorize(creds)
+        return _client
+    except Exception as e:
+        print(f"[Sheets] Auth xatolik: {e}")
+        return None
+
+
+def _get_sheet():
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        return client.open_by_key(SHEET_KEY)
+    except Exception as e:
+        print(f"[Sheets] Sheet ochish xatolik: {e}")
+        return None
+
+
+def _get_worksheet(sheet, name: str, headers: list[str]):
+    """Worksheet ni olish yoki yaratish."""
+    try:
+        ws = sheet.worksheet(name)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sheet.add_worksheet(title=name, rows="1000", cols="20")
+        if headers:
+            ws.append_row(headers)
+    return ws
+
+
+def sync_employee_to_sheets(employee: dict):
+    """Bitta xodimni Sheets ga yozish."""
+    sheet = _get_sheet()
+    if not sheet:
+        return
+
+    ws = _get_worksheet(sheet, "Employees", [
+        "telegram_id", "name", "role", "branch", "shift", "active", "created_at"
+    ])
+
+    try:
+        all_rows = ws.get_all_records()
+    except Exception:
+        all_rows = []
+
+    # Mavjud qatorni yangilash yoki yangi qo'shish
+    found = False
+    for i, row in enumerate(all_rows, start=2):
+        if str(row.get("telegram_id", "")) == str(employee["telegram_id"]):
+            ws.update(f"A{i}:G{i}", [[
+                str(employee["telegram_id"]),
+                employee["name"],
+                employee.get("role", "office_manager"),
+                employee.get("branch", "integro"),
+                employee.get("shift", "morning"),
+                str(employee.get("active", 1)),
+                employee.get("created_at", ""),
+            ]])
+            found = True
+            break
+
+    if not found:
+        ws.append_row([
+            str(employee["telegram_id"]),
+            employee["name"],
+            employee.get("role", "office_manager"),
+            employee.get("branch", "integro"),
+            employee.get("shift", "morning"),
+            str(employee.get("active", 1)),
+            employee.get("created_at", ""),
+        ])
+
+
+def sync_attendance_to_sheets(record: dict):
+    """Bitta attendance yozuvini Sheets ga yozish."""
+    sheet = _get_sheet()
+    if not sheet:
+        return
+
+    ws = _get_worksheet(sheet, "Attendance", [
+        "employee_id", "date", "check_in_time", "check_out_time",
+        "check_in_video_id", "check_out_video_id", "status", "late_minutes",
+        "name", "role", "branch", "shift"
+    ])
+
+    try:
+        ws.append_row([
+            str(record.get("employee_id", "")),
+            record.get("date", ""),
+            record.get("check_in_time", ""),
+            record.get("check_out_time", ""),
+            record.get("check_in_video_id", ""),
+            record.get("check_out_video_id", ""),
+            record.get("status", ""),
+            str(record.get("late_minutes", 0)),
+            record.get("name", ""),
+            record.get("role", ""),
+            record.get("branch", ""),
+            record.get("shift", ""),
+        ])
+    except Exception as e:
+        print(f"[Sheets] sync_attendance xatolik: {e}")
+
+
+def load_employees_from_sheets():
+    """Sheets dan barcha xodimlarni yuklash (bot restart da)."""
+    from db import add_employee
+
+    sheet = _get_sheet()
+    if not sheet:
+        return []
+
+    try:
+        ws = _get_worksheet(sheet, "Employees", [])
+        rows = ws.get_all_records()
+    except Exception as e:
+        print(f"[Sheets] load_employees xatolik: {e}")
+        return []
+
+    employees = []
+    for row in rows:
+        try:
+            tid = int(row["telegram_id"])
+            name = row["name"]
+            role = row.get("role", "office_manager")
+            branch = row.get("branch", "integro")
+            shift = row.get("shift", "morning")
+            active = int(row.get("active", 1))
+
+            if active:
+                add_employee(tid, name, role, branch, shift)
+                employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
+        except (ValueError, KeyError) as e:
+            print(f"[Sheets] Qator xatolik: {e}")
+
+    return employees
