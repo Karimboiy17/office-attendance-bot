@@ -690,6 +690,8 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await list_employees_cmd(update, context)
     elif text == "🗑️ Xodimni o'chirish":
         await show_remove_employees(update, context)
+    elif text == "🕐 Ish vaqtini o'zgartirish":
+        await show_edit_time_employees(update, context)
     elif text == "🏢 Filiallar":
         user_id = update.effective_user.id
         if not is_admin(user_id):
@@ -760,6 +762,205 @@ async def show_remove_employees(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode="Markdown",
         reply_markup=kb,
     )
+
+
+async def show_edit_time_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ish vaqtini tahrirlash uchun xodimlar ro'yxati."""
+    if not has_access(update.effective_user.id):
+        return
+
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        branch = get_coordinator_branch(user_id)
+        if branch:
+            employees = db.get_employees_by_branch(branch)
+        else:
+            employees = []
+    else:
+        employees = db.get_all_employees()
+
+    if not employees:
+        await update.message.reply_text("Hali xodimlar qo'shilmagan.")
+        return
+
+    kb = keyboard.edit_employees_keyboard(employees)
+    await update.message.reply_text(
+        "🕐 *Ish vaqti o'zgartiriladigan xodimni tanlang:*",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+
+async def handle_edit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ish vaqtini tahrirlash uchun callback flow handler."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    if not has_access(user_id):
+        return
+
+    data = query.data
+
+    # ── Bekor qilish ──
+    if data == "editcancel":
+        if is_admin(user_id):
+            await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
+        else:
+            await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
+        return
+
+    # ── Xodimni tanlash ──
+    if data.startswith("editemp_"):
+        emp_id = int(data[8:])
+        context.user_data["edit_emp_id"] = emp_id
+        context.user_data["edit_emp_name"] = db.get_employee(emp_id)["name"]
+        kb = keyboard.edit_date_keyboard(emp_id)
+        await query.edit_message_text(
+            f"👤 *{context.user_data['edit_emp_name']}* — sanani tanlang:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return
+
+    # ── Sanani tanlash (bugun/kecha/boshqa) ──
+    if data.startswith("editdate_"):
+        parts = data.split("_", 2)  # editdate_EMPID_DATE
+        emp_id = int(parts[1])
+        date_str = parts[2]
+        context.user_data["edit_date"] = date_str
+        context.user_data["edit_emp_id"] = emp_id
+
+        emp = db.get_employee(emp_id)
+        record = db.get_attendance_record(emp_id, date_str)
+        current_in = record.get("check_in_time", "") if record else ""
+        current_out = record.get("check_out_time", "") if record else ""
+
+        kb = keyboard.edit_field_keyboard(emp_id, date_str, current_in, current_out)
+        name = emp["name"] if emp else str(emp_id)
+        msg = f"👤 *{name}* — {date_str}\n\n"
+        if current_in:
+            msg += f"🕐 Kelish: `{current_in[:5]}`\n"
+        else:
+            msg += "🕐 Kelish: —\n"
+        if current_out:
+            msg += f"🚶 Ketish: `{current_out[:5]}`\n"
+        else:
+            msg += "🚶 Ketish: —\n"
+        msg += "\nQaysi vaqtni o'zgartirmoqchisiz?"
+        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
+        return
+
+    # ── Boshqa sana kiritish ──
+    if data.startswith("editdateother_"):
+        emp_id = int(data[14:])
+        context.user_data["edit_emp_id"] = emp_id
+        context.user_data["awaiting_date"] = True
+        await query.edit_message_text(
+            "✏️ *Sanani YYYY-MM-DD formatida kiriting:*\n\n"
+            "Misol: 2026-06-13",
+            parse_mode="Markdown",
+        )
+        return
+
+    # ── Field tanlash (check_in / check_out) ──
+    if data.startswith("editfield_"):
+        parts = data.split("_", 3)  # editfield_EMPID_DATE_FIELD
+        emp_id = int(parts[1])
+        date_str = parts[2]
+        field = parts[3]
+        context.user_data["edit_field"] = field
+
+        kb = keyboard.edit_hour_keyboard(emp_id, date_str, field)
+        field_label = "kelish" if field == "check_in" else "ketish"
+        await query.edit_message_text(
+            f"🕐 *{field_label.capitalize()} vaqti* — soatni tanlang:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return
+
+    # ── Soat tanlash (24 soat) ──
+    if data.startswith("edithour_"):
+        parts = data.split("_", 4)  # edithour_EMPID_DATE_FIELD_HOUR
+        emp_id = int(parts[1])
+        date_str = parts[2]
+        field = parts[3]
+        hour = parts[4]
+        context.user_data["edit_hour"] = hour
+
+        kb = keyboard.edit_minute_keyboard(emp_id, date_str, field, hour)
+        field_label = "kelish" if field == "check_in" else "ketish"
+        await query.edit_message_text(
+            f"🕐 *{field_label.capitalize()} vaqti* — {hour}:XX\nDaqiqani tanlang:",
+            parse_mode="Markdown",
+            reply_markup=kb,
+        )
+        return
+
+    # ── Vaqtni saqlash ──
+    if data.startswith("edittime_"):
+        parts = data.split("_", 4)  # edittime_EMPID_DATE_FIELD_TIME
+        emp_id = int(parts[1])
+        date_str = parts[2]
+        field = parts[3]
+        time_str = parts[4]  # HH:MM
+
+        emp = db.get_employee(emp_id)
+        name = emp["name"] if emp else str(emp_id)
+
+        # Validatsiya
+        if field == "check_out":
+            # Check-in mavjudligini tekshirish
+            record = db.get_attendance_record(emp_id, date_str)
+            if record and record.get("check_in_time"):
+                if time_str <= record["check_in_time"]:
+                    await query.edit_message_text(
+                        f"❌ *Xatolik:* Ketish vaqti ({time_str}) kelish vaqtidan ({record['check_in_time'][:5]}) "
+                        f"keyin bo'lishi kerak!\n\nQaytadan urinib ko'ring.",
+                        parse_mode="Markdown",
+                    )
+                    return
+            # Agar check-in bo'lmasa, check-out ni saqlash mumkin
+
+        # Saqlash
+        success = db.update_attendance_time(emp_id, date_str, field, time_str)
+        if success:
+            field_label = "kelish" if field == "check_in" else "ketish"
+            msg = (
+                f"✅ *{name}* uchun {date_str} sanadagi {field_label} vaqti\n"
+                f"`{time_str}` ga o'zgartirildi!"
+            )
+
+            # Agar check_in o'rnatilgan bo'lsa, status ni qayta hisoblash
+            if field == "check_in":
+                record = db.get_attendance_record(emp_id, date_str)
+                if record and record.get("check_in_time"):
+                    shift_config = None
+                    if emp:
+                        shift_config = config.SHIFTS.get(emp.get("shift"))
+
+                    # Statusni yangilash
+                    if shift_config:
+                        check_time = record["check_in_time"]
+                        shift_start = shift_config["start"]
+                        # 15 min tolerance
+                        from datetime import datetime, timedelta
+                        start_dt = datetime.strptime(shift_start, "%H:%M")
+                        check_dt = datetime.strptime(check_time[:5], "%H:%M")
+                        late_min = int((check_dt - start_dt).total_seconds() / 60)
+                        if late_min <= 15:
+                            db._update_status(emp_id, date_str, "on_time", 0)
+                        else:
+                            db._update_status(emp_id, date_str, "late", late_min)
+
+            await query.edit_message_text(msg, parse_mode="Markdown")
+        else:
+            await query.edit_message_text(
+                "❌ *Xatolik:* Vaqtni saqlashda muammo yuz berdi.",
+                parse_mode="Markdown",
+            )
+        return
 
 
 async def handle_employee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1017,6 +1218,45 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ro'yxatdan o'tish va admin tasdiqlash vaqtida ism matnini qabul qilish."""
     user_id = update.effective_user.id
 
+    # ── Ish vaqtini tahrirlash — boshqa sana kiritish ──
+    if context.user_data.get("awaiting_date") and context.user_data.get("edit_emp_id"):
+        text = update.message.text.strip()
+        # YYYY-MM-DD formatini tekshirish
+        import re
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", text):
+            emp_id = context.user_data["edit_emp_id"]
+            date_str = text
+            context.user_data.pop("awaiting_date", None)
+            context.user_data["edit_date"] = date_str
+
+            emp = db.get_employee(emp_id)
+            record = db.get_attendance_record(emp_id, date_str)
+            current_in = record.get("check_in_time", "") if record else ""
+            current_out = record.get("check_out_time", "") if record else ""
+
+            from keyboard import edit_field_keyboard
+            kb = edit_field_keyboard(emp_id, date_str, current_in, current_out)
+            name = emp["name"] if emp else str(emp_id)
+            msg = f"👤 *{name}* — {date_str}\n\n"
+            if current_in:
+                msg += f"🕐 Kelish: `{current_in[:5]}`\n"
+            else:
+                msg += "🕐 Kelish: —\n"
+            if current_out:
+                msg += f"🚶 Ketish: `{current_out[:5]}`\n"
+            else:
+                msg += "🚶 Ketish: —\n"
+            msg += "\nQaysi vaqtni o'zgartirmoqchisiz?"
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb)
+        else:
+            await update.message.reply_text(
+                "❌ *Noto'g'ri format!*\n\n"
+                "Sanani *YYYY-MM-DD* formatida yozing.\n"
+                "Misol: `2026-06-13`",
+                parse_mode="Markdown",
+            )
+        return
+
     # Admin tasdiqlash jarayonida — ism kiritish
     if user_id in pending_approvals:
         approval = pending_approvals.pop(user_id)
@@ -1218,6 +1458,7 @@ def main():
         "📅 Bugun", "📊 Haftalik", "📆 Oylik",
         "⚠️ Kechikkanlar", "❌ Kelmaganlar",
         "👥 Xodimlar", "🏢 Filiallar", "🗑️ Xodimni o'chirish",
+        "🕐 Ish vaqtini o'zgartirish",
         "🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online",
         "📚 Academic Support",
         "🔙 Orqaga",
@@ -1240,6 +1481,9 @@ def main():
 
     # Inline callback — xodimlar ro'yxati + o'chirish
     app.add_handler(CallbackQueryHandler(handle_employee_callback, pattern="^(emp_|del_|delconfirm_|delcancel)"))
+
+    # Inline callback — ish vaqtini tahrirlash
+    app.add_handler(CallbackQueryHandler(handle_edit_time, pattern="^(edit)"))
 
     # Registration + Approve/Reject (hammasi bitta handler)
     app.add_handler(CallbackQueryHandler(handle_registration, pattern="^(regbranch|regshift|approve|reject|approvecancel)_"))

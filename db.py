@@ -278,6 +278,80 @@ def is_checked_out(employee_id: int, target_date: str = None) -> bool:
     return row is not None
 
 
+# ── Ish vaqtini tahrirlash ──
+
+def get_attendance_record(employee_id: int, target_date: str = None) -> dict | None:
+    """Bir xodimning berilgan sanadagi attendance yozuvini qaytaradi."""
+    if target_date is None:
+        target_date = datetime.now(tz).strftime("%Y-%m-%d")
+
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT * FROM attendance WHERE employee_id = ? AND date = ?",
+        (employee_id, target_date)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_attendance_time(employee_id: int, date: str, field: str, time_str: str) -> bool:
+    """Check-in yoki check-out vaqtini yangilash.
+    field: 'check_in' yoki 'check_out'
+    Agar yozuv mavjud bo'lmasa — insert, bo'lsa — update.
+    """
+    conn = get_conn()
+    try:
+        # Avval mavjud yozuvni tekshiramiz
+        existing = conn.execute(
+            "SELECT id FROM attendance WHERE employee_id = ? AND date = ?",
+            (employee_id, date)
+        ).fetchone()
+
+        if existing:
+            # Update
+            conn.execute(
+                f"UPDATE attendance SET {field}_time = ? WHERE employee_id = ? AND date = ?",
+                (time_str, employee_id, date)
+            )
+        else:
+            # Insert — agar check_in o'rnatilayotgan bo'lsa, status ni on_time qilamiz
+            status = "on_time" if field == "check_in" else "absent"
+            late_min = 0
+            conn.execute("""
+                INSERT INTO attendance (employee_id, date, check_in_time, check_out_time, status, late_minutes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                employee_id, date,
+                time_str if field == "check_in" else None,
+                time_str if field == "check_out" else None,
+                status,
+                late_min,
+            ))
+
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[DB] update_attendance_time error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def _update_status(employee_id: int, date: str, status: str, late_minutes: int):
+    """Attendance status ni yangilash (kichik helper)."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE attendance SET status = ?, late_minutes = ? WHERE employee_id = ? AND date = ?",
+            (status, late_minutes, employee_id, date)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] _update_status error: {e}")
+    finally:
+        conn.close()
+
+
 # ── Hisobot uchun query lar ──
 
 def get_today_attendance() -> list[dict]:
