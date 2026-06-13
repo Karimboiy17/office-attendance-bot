@@ -47,10 +47,17 @@ def is_coordinator(user_id: int) -> bool:
     return user_id in config.COORDINATOR_IDS
 
 
+def is_support_coordinator(user_id: int) -> bool:
+    return user_id == config.SUPPORT_COORDINATOR_ID
+
+
 def get_coordinator_branch(user_id: int) -> str | None:
     """Koordinator qaysi filialga tegishli ekanini qaytaradi.
     Agar bitta filialga biriktirilgan bo'lsa — o'sha filial.
-    Agar bir nechta yoki hech qaysiga — None."""
+    Agar bir nechta yoki hech qaysiga — None.
+    Support coordinator uchun — "academic_support"."""
+    if is_support_coordinator(user_id):
+        return "academic_support"
     branches = []
     for branch, ids in config.COORDINATORS.items():
         if user_id in ids:
@@ -68,8 +75,8 @@ def is_admin(user_id: int) -> bool:
 
 
 def has_access(user_id: int) -> bool:
-    """Admin yoki coordinator — hisobot ko'ra oladi."""
-    return is_admin(user_id) or is_coordinator(user_id)
+    """Admin, coordinator yoki support coordinator — hisobot ko'ra oladi."""
+    return is_admin(user_id) or is_coordinator(user_id) or is_support_coordinator(user_id)
 
 
 def is_work_day() -> bool:
@@ -265,6 +272,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Tugmalar yoki komandalar orqali boshqaring:",
                 parse_mode="Markdown",
                 reply_markup=keyboard.admin_keyboard(),
+            )
+        elif is_support_coordinator(user_id):
+            await update.message.reply_text(
+                f"🏢 *Office Attendance Bot* — Academic Support Koordinator\n"
+                f"📍 *Academic Support*\n\n"
+                "Academic Support xodimlari hisobotini ko'rasiz:",
+                parse_mode="Markdown",
+                reply_markup=keyboard.coordinator_keyboard("academic_support"),
             )
         else:
             branch = get_coordinator_branch(user_id)
