@@ -105,6 +105,12 @@ def _get_worksheet(sheet, name: str, headers: list[str]):
     """Worksheet ni olish yoki yaratish."""
     try:
         ws = sheet.worksheet(name)
+        # Mavjud worksheet bo'lsa, headerlarni to'ldirish (agar kerak bo'lsa)
+        existing_headers = ws.row_values(1)
+        if len(existing_headers) < len(headers):
+            new_headers = existing_headers + headers[len(existing_headers):]
+            ws.update(f"A1:{chr(64+len(new_headers))}1", [new_headers])
+            print(f"[Sheets] {name} headerlari yangilandi: {existing_headers} -> {new_headers}")
     except gspread.exceptions.WorksheetNotFound:
         ws = sheet.add_worksheet(title=name, rows="1000", cols="20")
         if headers:
@@ -239,6 +245,21 @@ def sync_attendance_to_sheets(record: dict):
         print(f"[Sheets] sync_attendance xatolik ({sheet_name}): {e}")
 
 
+def _fix_worksheet_headers(sheet):
+    """Barcha Xodimlar_* worksheet lardagi headerlarni yangilash."""
+    from string import ascii_uppercase
+    expected = ["telegram_id", "name", "role", "branch", "shift", "active", "created_at",
+                "custom_work_start", "custom_work_end"]
+    for ws in sheet.worksheets():
+        if ws.title.startswith("Xodimlar_"):
+            existing = ws.row_values(1)
+            if len(existing) < len(expected):
+                new_headers = existing + expected[len(existing):]
+                col_letter = ascii_uppercase[len(new_headers) - 1]
+                ws.update(f"A1:{col_letter}1", [new_headers])
+                print(f"[Sheets] {ws.title} headerlari yangilandi")
+
+
 def load_employees_from_sheets():
     """Sheets dan barcha xodimlarni yuklash (bot restart da) — barcha Xodimlar_* worksheet lardan."""
     from db import add_employee
@@ -248,6 +269,9 @@ def load_employees_from_sheets():
         return []
 
     employees = []
+
+    # Worksheet headerlarini to'ldirish (agar custom_work_start/end ustunlari yo'q bo'lsa)
+    _fix_worksheet_headers(sheet)
 
     # Eski "Employees" worksheet dan yuklash (backward compatibility)
     try:
