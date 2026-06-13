@@ -119,13 +119,27 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # CHECK-IN
 
         # ── Vaqt cheklovlarini tekshirish ──
-        shift_cfg = config.SHIFTS.get(emp["shift"])
-        if shift_cfg:
+        # Avval custom_work_start ni tekshiramiz, agar bo'lmasa shift default ishlatiladi
+        custom_start = emp.get("custom_work_start")
+        if custom_start:
+            parts = custom_start.split(":")
+            start_hour, start_min = int(parts[0]), int(parts[1])
+            shift_label = f"{custom_start} dan custom"
+        else:
+            shift_cfg = config.SHIFTS.get(emp["shift"])
+            if not shift_cfg:
+                shift_cfg = None
+                shift_label = ""
+            else:
+                start_hour = shift_cfg["start"]
+                start_min = 0
+                shift_label = shift_cfg["label"]
+
+        if shift_label:
             now = datetime.now(tz)
-            shift_start = now.replace(hour=shift_cfg["start"], minute=0, second=0, microsecond=0)
+            shift_start = now.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
             allowed_from = shift_start - timedelta(minutes=20)
             too_late = shift_start + timedelta(minutes=60)
-            shift_label = shift_cfg["label"]
 
             if now < allowed_from:
                 await update.message.reply_text(
