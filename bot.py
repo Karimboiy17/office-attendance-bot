@@ -842,6 +842,8 @@ async def handle_simple_work_time(update: Update, context: ContextTypes.DEFAULT_
         name = emp["name"] if emp else str(emp_id)
         db.update_employee_work_time(emp_id, "checkin", start_str)
         db.update_employee_work_time(emp_id, "checkout", end_str)
+        # Sheets'ga ham yozish (Railway restartda saqlanishi uchun)
+        sheets.sync_custom_time_to_sheets(emp_id, start_str, end_str)
         await query.edit_message_text(
             f"✅ *{name}* — ish vaqti `{start_str} dan {end_str} gacha` qilib belgilandi!",
             parse_mode="Markdown",
@@ -855,6 +857,8 @@ async def handle_simple_work_time(update: Update, context: ContextTypes.DEFAULT_
         name = emp["name"] if emp else str(emp_id)
         db.update_employee_work_time(emp_id, "checkin", "clear")
         db.update_employee_work_time(emp_id, "checkout", "clear")
+        # Sheets'dan ham o'chirish
+        sheets.sync_custom_time_to_sheets(emp_id)
         await query.edit_message_text(
             f"✅ *{name}* — ish vaqti default shift ga qaytarildi!",
             parse_mode="Markdown",

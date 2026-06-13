@@ -137,6 +137,7 @@ def sync_employee_to_sheets(employee: dict):
 
     ws = _get_worksheet(sheet, sheet_name, [
         "telegram_id", "name", "role", "branch", "shift", "active", "created_at",
+        "custom_work_start", "custom_work_end",
     ])
 
     try:
@@ -147,7 +148,7 @@ def sync_employee_to_sheets(employee: dict):
     found = False
     for i, row in enumerate(all_rows, start=2):
         if str(row.get("telegram_id", "")) == str(employee["telegram_id"]):
-            ws.update(f"A{i}:G{i}", [[
+            ws.update(f"A{i}:I{i}", [[
                 str(employee["telegram_id"]),
                 employee["name"],
                 employee.get("role", "office_manager"),
@@ -155,6 +156,8 @@ def sync_employee_to_sheets(employee: dict):
                 employee.get("shift", "morning"),
                 str(employee.get("active", 1)),
                 employee.get("created_at", ""),
+                employee.get("custom_work_start", ""),
+                employee.get("custom_work_end", ""),
             ]])
             found = True
             break
@@ -168,8 +171,57 @@ def sync_employee_to_sheets(employee: dict):
             employee.get("shift", "morning"),
             str(employee.get("active", 1)),
             employee.get("created_at", ""),
+            employee.get("custom_work_start", ""),
+            employee.get("custom_work_end", ""),
         ])
 
+
+def sync_custom_time_to_sheets(telegram_id: int, custom_work_start: str | None = None,
+                               custom_work_end: str | None = None):
+    """Xodimning custom ish vaqtini Google Sheets'ga yozish (faqat H va I column)."""
+    from db import get_employee
+    emp = get_employee(telegram_id)
+    if not emp:
+        return
+
+    sheet = _get_sheet()
+    if not sheet:
+        return
+
+    branch = emp.get("branch", "integro")
+    sheet_name = _sanitize_sheet_name(f"Xodimlar_{branch}")
+
+    try:
+        ws = sheet.worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return
+
+    try:
+        all_rows = ws.get_all_records()
+    except Exception:
+        return
+
+    for i, row in enumerate(all_rows, start=2):
+        if str(row.get("telegram_id", "")) == str(telegram_id):
+            start_val = custom_work_start if custom_work_start else ""
+            end_val = custom_work_end if custom_work_end else ""
+            ws.update(f"H{i}:I{i}", [[start_val, end_val]])
+            print(f"[Sheets] Custom vaqt yangilandi: {telegram_id} -> {start_val} / {end_val}")
+            return
+
+    # Agar Sheets'da topilmasa, employee ma'lumotlari bilan qator qo'shamiz
+    from datetime import datetime
+    ws.append_row([
+        str(telegram_id),
+        emp["name"],
+        emp.get("role", "office_manager"),
+        emp.get("branch", "integro"),
+        emp.get("shift", "morning"),
+        str(emp.get("active", 1)),
+        emp.get("created_at", datetime.now().isoformat()),
+        custom_work_start or "",
+        custom_work_end or "",
+    ])
 
 def sync_attendance_to_sheets(record: dict):
     """Bitta attendance yozuvini Sheets ga yozish — filiali bo'yicha alohida."""
@@ -228,8 +280,10 @@ def load_employees_from_sheets():
                 shift = row.get("shift", "morning")
                 active = int(row.get("active", 1))
                 if active:
-                    add_employee(tid, name, role, branch, shift)
-                    employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
+                    cws = row.get("custom_work_start", "") or None
+                    cwe = row.get("custom_work_end", "") or None
+                    add_employee(tid, name, role, branch, shift, cws, cwe)
+                    employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift, "custom_work_start": cws, "custom_work_end": cwe})
             except (ValueError, KeyError) as e:
                 print(f"[Sheets] Employees qator xatolik: {e}")
     except gspread.exceptions.WorksheetNotFound:
@@ -252,8 +306,10 @@ def load_employees_from_sheets():
                         shift = row.get("shift", "morning")
                         active = int(row.get("active", 1))
                         if active:
-                            add_employee(tid, name, role, branch, shift)
-                            employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
+                            cws = row.get("custom_work_start", "") or None
+                            cwe = row.get("custom_work_end", "") or None
+                            add_employee(tid, name, role, branch, shift, cws, cwe)
+                            employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift, "custom_work_start": cws, "custom_work_end": cwe})
                     except (ValueError, KeyError) as e:
                         print(f"[Sheets] {title} qator xatolik: {e}")
             except Exception as e:
