@@ -691,7 +691,7 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
 
     elif data.startswith("approve_"):
-        # Admin tasdiqladi — lekin avval ism so'raymiz
+        # Admin tasdiqladi — ism callback data dan olinadi
         parts = data.split("_", 4)  # approve_USERID_BRANCH_SHIFT_NAME
         new_user_id = int(parts[1])
         branch = parts[2]
@@ -703,24 +703,41 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.answer("❌ Ruxsat yo'q", show_alert=True)
             return
 
-        # Admin uchun sessiyaga saqlab, ism so'raymiz
-        pending_approvals[user_id] = {
-            "telegram_id": new_user_id,
-            "branch": branch,
-            "shift": shift,
-            "telegram_name": telegram_name,
-        }
+        # To'g'ridan-to'g'ri saqlaymiz — ism callback data dan
+        success = db.add_employee(new_user_id, telegram_name, "office_manager", branch, shift)
+        if success:
+            emp = db.get_employee(new_user_id)
+            if emp:
+                sheets.sync_employee_to_sheets(emp)
 
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-        cancel_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Bekor qilish", callback_data=f"approvecancel_{new_user_id}")
-        ]])
+            branch_label = config.BRANCHES.get(branch, branch)
+            shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
 
-        await query.edit_message_text(
-            query.message.text + f"\n\n✏️ *Ism-familiyani kiriting:*",
-            parse_mode="Markdown",
-            reply_markup=cancel_kb,
-        )
+            await query.edit_message_text(
+                f"✅ *{telegram_name}* tasdiqlandi!\n\n"
+                f"📍 {branch_label}\n"
+                f"🕐 {shift_label}",
+                parse_mode="Markdown",
+            )
+
+            # Xodimga xabar
+            try:
+                await context.bot.send_message(
+                    new_user_id,
+                    f"✅ *Ro'yxatdan o'tdingiz!*\n\n"
+                    f"👤 {telegram_name}\n"
+                    f"📍 {branch_label}\n"
+                    f"🕐 {shift_label}\n\n"
+                    "Endi *botga video* yuborib check-in qiling!",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.error(f"Xodimga xabar: {e}")
+        else:
+            await query.edit_message_text(
+                query.message.text + "\n\n❌ *Xatolik yuz berdi*",
+                parse_mode="Markdown",
+            )
 
     elif data.startswith("approvecancel_"):
         user_id = query.from_user.id
