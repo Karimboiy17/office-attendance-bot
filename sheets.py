@@ -137,7 +137,6 @@ def sync_employee_to_sheets(employee: dict):
 
     ws = _get_worksheet(sheet, sheet_name, [
         "telegram_id", "name", "role", "branch", "shift", "active", "created_at",
-        "custom_work_start", "custom_work_end",
     ])
 
     try:
@@ -148,7 +147,7 @@ def sync_employee_to_sheets(employee: dict):
     found = False
     for i, row in enumerate(all_rows, start=2):
         if str(row.get("telegram_id", "")) == str(employee["telegram_id"]):
-            ws.update(f"A{i}:I{i}", [[
+            ws.update(f"A{i}:G{i}", [[
                 str(employee["telegram_id"]),
                 employee["name"],
                 employee.get("role", "office_manager"),
@@ -156,8 +155,6 @@ def sync_employee_to_sheets(employee: dict):
                 employee.get("shift", "morning"),
                 str(employee.get("active", 1)),
                 employee.get("created_at", ""),
-                employee.get("custom_work_start", ""),
-                employee.get("custom_work_end", ""),
             ]])
             found = True
             break
@@ -171,44 +168,7 @@ def sync_employee_to_sheets(employee: dict):
             employee.get("shift", "morning"),
             str(employee.get("active", 1)),
             employee.get("created_at", ""),
-            employee.get("custom_work_start", ""),
-            employee.get("custom_work_end", ""),
         ])
-
-
-def sync_employee_custom_time_to_sheets(employee_id: int, field: str, time_str: str):
-    """Custom work vaqtini Google Sheets ga yozish (restartda saqlanib qolishi uchun)."""
-    from db import get_employee
-    emp = get_employee(employee_id)
-    if not emp:
-        return
-
-    sheet = _get_sheet()
-    if not sheet:
-        return
-
-    branch = emp.get("branch", "integro")
-    sheet_name = _sanitize_sheet_name(f"Xodimlar_{branch}")
-    try:
-        ws = sheet.worksheet(sheet_name)
-    except gspread.exceptions.WorksheetNotFound:
-        return
-
-    try:
-        all_rows = ws.get_all_records()
-    except Exception:
-        return
-
-    column = "custom_work_start" if field == "checkin" else "custom_work_end"
-    col_idx = 7 if field == "checkin" else 8  # 0-indexed: H=7, I=8
-    value = "" if time_str == "clear" else time_str
-
-    for i, row in enumerate(all_rows, start=2):
-        if str(row.get("telegram_id", "")) == str(employee_id):
-            # A:I = 9 columns, update only the custom time column
-            cell_col = chr(ord('H') + (0 if field == "checkin" else 1))
-            ws.update(f"{cell_col}{i}", [[value]])
-            break
 
 
 def sync_attendance_to_sheets(record: dict):
@@ -245,21 +205,6 @@ def sync_attendance_to_sheets(record: dict):
         print(f"[Sheets] sync_attendance xatolik ({sheet_name}): {e}")
 
 
-def _fix_worksheet_headers(sheet):
-    """Barcha Xodimlar_* worksheet lardagi headerlarni yangilash."""
-    from string import ascii_uppercase
-    expected = ["telegram_id", "name", "role", "branch", "shift", "active", "created_at",
-                "custom_work_start", "custom_work_end"]
-    for ws in sheet.worksheets():
-        if ws.title.startswith("Xodimlar_"):
-            existing = ws.row_values(1)
-            if len(existing) < len(expected):
-                new_headers = existing + expected[len(existing):]
-                col_letter = ascii_uppercase[len(new_headers) - 1]
-                ws.update(f"A1:{col_letter}1", [new_headers])
-                print(f"[Sheets] {ws.title} headerlari yangilandi")
-
-
 def load_employees_from_sheets():
     """Sheets dan barcha xodimlarni yuklash (bot restart da) — barcha Xodimlar_* worksheet lardan."""
     from db import add_employee
@@ -269,9 +214,6 @@ def load_employees_from_sheets():
         return []
 
     employees = []
-
-    # Worksheet headerlarini to'ldirish (agar custom_work_start/end ustunlari yo'q bo'lsa)
-    _fix_worksheet_headers(sheet)
 
     # Eski "Employees" worksheet dan yuklash (backward compatibility)
     try:
@@ -286,9 +228,7 @@ def load_employees_from_sheets():
                 shift = row.get("shift", "morning")
                 active = int(row.get("active", 1))
                 if active:
-                    cws = row.get("custom_work_start", "") or None
-                    cwe = row.get("custom_work_end", "") or None
-                    add_employee(tid, name, role, branch, shift, cws, cwe)
+                    add_employee(tid, name, role, branch, shift)
                     employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
             except (ValueError, KeyError) as e:
                 print(f"[Sheets] Employees qator xatolik: {e}")
@@ -312,9 +252,7 @@ def load_employees_from_sheets():
                         shift = row.get("shift", "morning")
                         active = int(row.get("active", 1))
                         if active:
-                            cws = row.get("custom_work_start", "") or None
-                            cwe = row.get("custom_work_end", "") or None
-                            add_employee(tid, name, role, branch, shift, cws, cwe)
+                            add_employee(tid, name, role, branch, shift)
                             employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift})
                     except (ValueError, KeyError) as e:
                         print(f"[Sheets] {title} qator xatolik: {e}")
