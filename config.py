@@ -20,17 +20,22 @@ BRANCHES = {
     "amir_temur": "Amir Temur",
     "xalqlar": "Xalqlar Do'stligi",
     "online": "Online",
+    "academic_support": "Academic Support",
 }
 
 BRANCH_LIST = list(BRANCHES.keys())
 
 # ── Rollar ──
-ROLES = ["office_manager", "cashier", "coordinator"]
+ROLES = ["office_manager", "cashier", "coordinator", "academic_support"]
 ROLE_LABELS = {
     "office_manager": "Office Manager",
     "cashier": "Kassir",
     "coordinator": "Koordinator",
+    "academic_support": "Academic Support",
 }
+
+# ── Support Coordinator ──
+SUPPORT_COORDINATOR_ID = int(os.getenv("SUPPORT_COORDINATOR_ID", "6885108911"))
 
 # ── Coordinator lar (branch adminlari) ──
 # Format: "integro:5238121241,1054482233;amir_temur:87654321;xalqlas:111111;online:222222"

@@ -44,6 +44,7 @@ def branches_keyboard():
     return ReplyKeyboardMarkup(
         [
             ["🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online"],
+            ["📚 Academic Support"],
             ["🔙 Orqaga"],
         ],
         resize_keyboard=True,

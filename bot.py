@@ -168,6 +168,21 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception:
                 pass
 
+        # Academic Support → support coordinator ga xabar
+        if emp["branch"] == "academic_support":
+            status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
+            try:
+                await context.bot.send_message(
+                    config.SUPPORT_COORDINATOR_ID,
+                    "📚 *Academic Support* — Check-in\n\n"
+                    f"👤 {emp['name']}\n"
+                    f"🕐 {result['time'][:5]}\n"
+                    f"📊 {status_text}",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
         # Sheets ga yozish
         sheets.sync_attendance_to_sheets({
             "employee_id": user_id,
@@ -200,6 +215,19 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg)
+            except Exception:
+                pass
+
+        # Academic Support → support coordinator ga xabar (check-out)
+        if emp["branch"] == "academic_support":
+            try:
+                await context.bot.send_message(
+                    config.SUPPORT_COORDINATOR_ID,
+                    "📚 *Academic Support* — Check-out\n\n"
+                    f"👤 {emp['name']}\n"
+                    f"🕐 {time_str}",
+                    parse_mode="Markdown",
+                )
             except Exception:
                 pass
 
@@ -274,11 +302,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏢 Amir Temur", callback_data="regbranch_amir_temur")],
         [InlineKeyboardButton("🏢 Xalqlar", callback_data="regbranch_xalqlar")],
         [InlineKeyboardButton("💻 Online", callback_data="regbranch_online")],
+        [InlineKeyboardButton("📚 Academic Support", callback_data="regbranch_academic_support")],
     ])
 
     await update.message.reply_text(
         f"👋 *Xush kelibsiz, {name}!*\n\n"
-        "Ro'yxatdan o'tish uchun filialingizni tanlang:",
+        "Ro'yxatdan o'tish uchun bo'limingizni tanlang:",
         parse_mode="Markdown",
         reply_markup=kb,
     )
@@ -642,6 +671,8 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await show_branch_report(update, "xalqlar")
     elif text == "🏢 Online":
         await show_branch_report(update, "online")
+    elif text == "📚 Academic Support":
+        await show_branch_report(update, "academic_support")
     elif text == "🔙 Orqaga":
         user_id = update.effective_user.id
         if is_admin(user_id):
@@ -796,7 +827,7 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         branch_label = config.BRANCHES.get(branch, branch)
         shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
 
-        # Tasdiqlash so'rovi admin ga
+        # Tasdiqlash so'rovi admin yoki support coordinator ga
         approve_kb = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
@@ -811,29 +842,46 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         ])
 
         admin_msg = (
-            f"🆕 *Yangi xodim:*\n\n"
+            f"🆕 *Yangi xodim:*\n"
             f"👤 {name}\n"
             f"📍 {branch_label}\n"
             f"🕐 {shift_label}\n"
             f"🆔 `{user_id}`"
         )
 
-        for admin_id in config.ADMIN_IDS:
+        if branch == "academic_support":
+            # Academic Support → support coordinator ga
+            target_ids = [config.SUPPORT_COORDINATOR_ID]
+            reply_text = (
+                f"👤 *{name}*\n"
+                f"📍 {branch_label}\n"
+                f"🕐 {shift_label}\n\n"
+                "✅ Ma'lumotlaringiz *Support Coordinator*ga yuborildi.\n"
+                "Tasdiqlangach sizga xabar keladi."
+            )
+        else:
+            # Office manager → admin ga
+            target_ids = config.ADMIN_IDS
+            reply_text = (
+                f"👤 *{name}*\n"
+                f"📍 {branch_label}\n"
+                f"🕐 {shift_label}\n\n"
+                "✅ Ma'lumotlaringiz *admin*ga yuborildi.\n"
+                "Tasdiqlangach sizga xabar keladi."
+            )
+
+        for target_id in target_ids:
             try:
                 await context.bot.send_message(
-                    admin_id, admin_msg,
+                    target_id, admin_msg,
                     parse_mode="Markdown",
                     reply_markup=approve_kb,
                 )
             except Exception as e:
-                logger.error(f"Admin {admin_id} ga so'rov: {e}")
+                logger.error(f"Admin {target_id} ga so'rov: {e}")
 
         await query.edit_message_text(
-            f"👤 *{name}*\n"
-            f"📍 {branch_label}\n"
-            f"🕐 {shift_label}\n\n"
-            "✅ Ma'lumotlaringiz *admin*ga yuborildi.\n"
-            "Tasdiqlangach sizga xabar keladi.",
+            reply_text,
             parse_mode="Markdown",
         )
 
@@ -846,13 +894,14 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         telegram_name = parts[4] if len(parts) > 4 else str(new_user_id)
 
         user_id = query.from_user.id
-        if not is_admin(user_id):
+        if not is_admin(user_id) and user_id != config.SUPPORT_COORDINATOR_ID:
             await query.answer("❌ Ruxsat yo'q", show_alert=True)
             return
 
         # To'g'ridan-to'g'ri saqlaymiz — ism callback data dan
         pending_registration.pop(new_user_id, None)  # tozalash
-        success = db.add_employee(new_user_id, telegram_name, "office_manager", branch, shift)
+        role = "academic_support" if branch == "academic_support" else "office_manager"
+        success = db.add_employee(new_user_id, telegram_name, role, branch, shift)
         if success:
             emp = db.get_employee(new_user_id)
             if emp:
@@ -904,7 +953,7 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
         name = parts[2] if len(parts) > 2 else str(new_user_id)
 
         user_id = query.from_user.id
-        if not is_admin(user_id):
+        if not is_admin(user_id) and user_id != config.SUPPORT_COORDINATOR_ID:
             await query.answer("❌ Ruxsat yo'q", show_alert=True)
             return
 
@@ -1132,6 +1181,7 @@ def main():
         "⚠️ Kechikkanlar", "❌ Kelmaganlar",
         "👥 Xodimlar", "🏢 Filiallar", "🗑️ Xodimni o'chirish",
         "🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online",
+        "📚 Academic Support",
         "🔙 Orqaga",
         # Xodim tugmalari
         "👤 Mening ma'lumotim", "📋 Qanday ishlatish?",
