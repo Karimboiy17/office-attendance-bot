@@ -254,3 +254,38 @@ def load_employees_from_sheets():
                 print(f"[Sheets] {title} o'qish xatolik: {e}")
 
     return employees
+
+
+def sync_deletions_from_sheets():
+    """Sheets dan o'chirilgan xodimlarni DB dan o'chirish (bot restart da)."""
+    from db import get_all_employees, remove_employee
+
+    sheet = _get_sheet()
+    if not sheet:
+        print("[Sheets] sync_deletions: sheet ochilmadi, o'tkazib yuborildi.")
+        return
+
+    # Sheets dan barcha telegram_id larni yig'ish
+    sheet_ids = set()
+    for ws in sheet.worksheets():
+        title = ws.title
+        if title.startswith("Xodimlar_") or title == "Employees":
+            try:
+                rows = ws.get_all_records()
+                for row in rows:
+                    try:
+                        active = int(row.get("active", 1))
+                        if active:
+                            sheet_ids.add(int(row["telegram_id"]))
+                    except (ValueError, KeyError):
+                        pass
+            except Exception as e:
+                print(f"[Sheets] {title} o'qish xatolik: {e}")
+
+    # DB dagi xodimlar bilan solishtirish
+    db_employees = get_all_employees()
+    for emp in db_employees:
+        tid = emp["telegram_id"]
+        if tid not in sheet_ids:
+            print(f"[Sheets] Xodim Sheets da yo'q, DB dan o'chirish: {emp['name']} ({tid})")
+            remove_employee(tid)

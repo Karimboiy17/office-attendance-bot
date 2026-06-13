@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, time as dt_time
+import re
 
 import pytz
 
@@ -825,6 +826,7 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         # To'g'ridan-to'g'ri saqlaymiz — ism callback data dan
+        pending_registration.pop(new_user_id, None)  # tozalash
         success = db.add_employee(new_user_id, telegram_name, "office_manager", branch, shift)
         if success:
             emp = db.get_employee(new_user_id)
@@ -1071,8 +1073,9 @@ def main():
     # Bazani yaratish
     db.init_db()
 
-    # Sheets dan xodimlarni yuklash
+    # Sheets dan xodimlarni yuklash va o'chirilganlarni sinxronlash
     sheets.load_employees_from_sheets()
+    sheets.sync_deletions_from_sheets()
 
     # Application
     app = Application.builder().token(config.BOT_TOKEN).build()
@@ -1108,8 +1111,10 @@ def main():
         # Xodim tugmalari
         "👤 Mening ma'lumotim", "📋 Qanday ishlatish?",
     ]
+    # Har bir matnni escape qilamiz — '?' kabi regex maxsus belgilari uchun
+    escaped = "|".join(re.escape(t) for t in button_texts)
     app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.Regex("^(" + "|".join(button_texts) + ")$"),
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.Regex(f"^({escaped})$"),
         handle_admin_buttons,
     ))
 
