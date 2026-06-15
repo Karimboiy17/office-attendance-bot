@@ -207,6 +207,32 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception:
                 pass
 
+        # Koordinatorlarga xabar va video yuborish
+        branch_coordinators = config.COORDINATORS.get(emp["branch"], [])
+        if branch_coordinators:
+            status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
+            branch_label = config.BRANCHES.get(emp["branch"], emp["branch"])
+            coordinator_msg = (
+                f"🏢 *{branch_label}* — Check-in\n\n"
+                f"👤 {emp['name']}\n"
+                f"🕐 {result['time'][:5]}\n"
+                f"📊 {status_text}"
+            )
+            for coord_id in branch_coordinators:
+                try:
+                    await context.bot.send_message(
+                        coord_id,
+                        coordinator_msg,
+                        parse_mode="Markdown",
+                    )
+                    # Video/Video_note ni forward qilish
+                    if update.message.video_note:
+                        await context.bot.send_video_note(coord_id, video_id)
+                    elif update.message.video:
+                        await context.bot.send_video(coord_id, video_id)
+                except Exception as e:
+                    logger.error(f"Koordinatorga xabar yuborishda xatolik ({coord_id}): {e}")
+
         # Sheets ga yozish
         sheets.sync_attendance_to_sheets({
             "employee_id": user_id,
