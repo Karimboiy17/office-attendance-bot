@@ -564,16 +564,34 @@ def get_missing_today(shift: str = None) -> list[dict]:
     conn = get_conn()
 
     if shift:
-        query = """
-            SELECT e.telegram_id, e.name, e.role, e.branch, e.shift
-            FROM employees e
-            LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
-            WHERE e.active = 1 AND e.shift = ? AND a.id IS NULL
-        """
+        # custom_work_start ni ham hisobga olish:
+        # morning: shift="morning" YOKI custom_work_start < "12:00"
+        # afternoon: shift="afternoon" YOKI custom_work_start >= "12:00"
+        if shift == "morning":
+            query = """
+                SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
+                       e.custom_work_start, e.custom_work_end
+                FROM employees e
+                LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
+                WHERE e.active = 1 AND a.id IS NULL
+                  AND (e.shift = ?
+                       OR (e.custom_work_start IS NOT NULL AND e.custom_work_start < '12:00'))
+            """
+        else:  # afternoon
+            query = """
+                SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
+                       e.custom_work_start, e.custom_work_end
+                FROM employees e
+                LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
+                WHERE e.active = 1 AND a.id IS NULL
+                  AND (e.shift = ?
+                       OR (e.custom_work_start IS NOT NULL AND e.custom_work_start >= '12:00'))
+            """
         rows = conn.execute(query, (today_str, shift)).fetchall()
     else:
         query = """
-            SELECT e.telegram_id, e.name, e.role, e.branch, e.shift
+            SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
+                   e.custom_work_start, e.custom_work_end
             FROM employees e
             LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
             WHERE e.active = 1 AND a.id IS NULL

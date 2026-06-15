@@ -36,7 +36,11 @@ def _format_missing(emp: dict) -> str:
     name = emp["name"]
     branch = BRANCHES.get(emp["branch"], emp["branch"])
     role = ROLE_LABELS.get(emp["role"], emp["role"])
-    shift = SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
+    # custom_work_start/end bor bo'lsa, shift label o'rniga shuni ko'rsat
+    if emp.get("custom_work_start"):
+        shift = f"Custom ({emp['custom_work_start']}-{emp.get('custom_work_end', '?')})"
+    else:
+        shift = SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
     return f"❌ {name} ({branch}, {role}, {shift})"
 
 
