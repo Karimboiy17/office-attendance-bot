@@ -3,6 +3,9 @@
 import logging
 from datetime import datetime, time as dt_time, timedelta
 import re
+import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import pytz
 
@@ -1336,12 +1339,37 @@ async def sheets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════
+#  HEALTH CHECK HTTP SERVER (Railway uchun)
+# ══════════════════════════════════════
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format, *args):
+        logger.debug("Health check: %s", format % args)
+
+def start_health_server():
+    """Railway health check uchun oddiy HTTP server."""
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    logger.info("✅ Health check server started on port %d", port)
+
+# ══════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════
 
 def main():
     """Botni ishga tushirish."""
     logger.info("Bot ishga tushmoqda...")
+
+    # Health check server (Railway deploy muvaffaqiyati uchun)
+    start_health_server()
 
     # Bazani yaratish
     db.init_db()
