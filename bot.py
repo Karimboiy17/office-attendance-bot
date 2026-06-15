@@ -300,14 +300,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             branch = get_coordinator_branch(user_id)
-            branch_label = config.BRANCHES.get(branch, branch) if branch else "Noma'lum filial"
-            await update.message.reply_text(
-                f"🏢 *Office Attendance Bot* — Koordinator\n"
-                f"📍 *{branch_label}*\n\n"
-                "Faqat o'z filialingiz hisobotini ko'rasiz:",
-                parse_mode="Markdown",
-                reply_markup=keyboard.coordinator_keyboard(branch),
-            )
+            if is_coordinator(user_id) and not branch:
+                # Bosh koordinator — hamma filialni ko'radi
+                await update.message.reply_text(
+                    f"🏢 *Office Attendance Bot* — Bosh Koordinator\n"
+                    f"📍 *Barcha filiallar*\n\n"
+                    "Barcha filiallar hisobotini ko'rasiz:",
+                    parse_mode="Markdown",
+                    reply_markup=keyboard.admin_keyboard(),
+                )
+            else:
+                branch_label = config.BRANCHES.get(branch, branch) if branch else "Noma'lum filial"
+                await update.message.reply_text(
+                    f"🏢 *Office Attendance Bot* — Koordinator\n"
+                    f"📍 *{branch_label}*\n\n"
+                    "Faqat o'z filialingiz hisobotini ko'rasiz:",
+                    parse_mode="Markdown",
+                    reply_markup=keyboard.coordinator_keyboard(branch),
+                )
         return
 
     # Oddiy xodim
@@ -792,7 +802,8 @@ async def show_simple_work_time_employees(update: Update, context: ContextTypes.
         if branch:
             employees = db.get_employees_by_branch(branch)
         else:
-            employees = []
+            # Bir nechta filial coordinatori yoki bosh koordinator — hammasini ko'rsatish
+            employees = db.get_all_employees()
     else:
         employees = db.get_all_employees()
 
