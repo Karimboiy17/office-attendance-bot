@@ -61,6 +61,12 @@ def init_db():
         except Exception:
             pass
 
+    # Migration: late_reason (agar column mavjud bo'lmasa)
+    try:
+        conn.execute("ALTER TABLE attendance ADD COLUMN late_reason TEXT")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -417,6 +423,23 @@ def _update_status(employee_id: int, date: str, status: str, late_minutes: int):
         conn.commit()
     except Exception as e:
         print(f"[DB] _update_status error: {e}")
+    finally:
+        conn.close()
+
+
+def set_late_reason(employee_id: int, date_str: str, reason: str) -> bool:
+    """Kechikkan xodimning sababini saqlash."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE attendance SET late_reason = ? WHERE employee_id = ? AND date = ?",
+            (reason, employee_id, date_str)
+        )
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[DB] set_late_reason error: {e}")
+        return False
     finally:
         conn.close()
 

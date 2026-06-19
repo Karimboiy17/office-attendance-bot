@@ -66,6 +66,12 @@ pending_registration = {}
 # {admin_id: {"telegram_id": ..., "branch": "...", "shift": "...", "telegram_name": "..."}}
 pending_approvals = {}
 
+# Kechikish sababi kutilayotgan xodimlar: {user_id: {"attempts": 0, "date": "..."}}
+pending_late_reason = {}
+
+# Maksimum necha marta sabab so'raladi
+MAX_LATE_REASON_ATTEMPTS = 3
+
 
 # ══════════════════════════════════════
 #  HELPERS
@@ -115,6 +121,45 @@ def is_work_day() -> bool:
 def is_sunday() -> bool:
     """Bugun yakshanbami?"""
     return datetime.now(tz).weekday() == 6
+
+
+# ══════════════════════════════════════
+#  KECHIKISH SABABI REMINDER
+# ══════════════════════════════════════
+
+async def late_reason_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Kechikkan xodimga sabab yozishni eslatish (3 martagacha)."""
+    job = context.job
+    user_id = job.data["user_id"]
+    attempt = job.data["attempt"]
+
+    if user_id not in pending_late_reason:
+        return  # Allaqachon javob bergan
+
+    pending_late_reason[user_id]["attempts"] += 1
+    remaining = MAX_LATE_REASON_ATTEMPTS - attempt
+
+    if remaining > 0:
+        await context.bot.send_message(
+            user_id,
+            f"⏰ *Kechikish sababini yozmadingiz!* ({attempt}/{MAX_LATE_REASON_ATTEMPTS})\n\n"
+            f"Iltimos, nima sababdan kechikkaningizni yozib yuboring:",
+            parse_mode="Markdown",
+        )
+        # Keyingi eslatma 10 daqiqadan so'ng
+        context.job_queue.run_once(
+            late_reason_reminder,
+            when=600,
+            data={"user_id": user_id, "attempt": attempt + 1},
+            name=f"late_reason_{user_id}",
+        )
+    else:
+        # 3 marta bo'ldi, to'xtatamiz
+        pending_late_reason.pop(user_id, None)
+        await context.bot.send_message(
+            user_id,
+            "⚠️ Kechikish sababini yozmadingiz. Keyingi safar o'z vaqtida kelishga harakat qiling!",
+        )
 
 
 # ══════════════════════════════════════
@@ -211,6 +256,23 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
             msg += "\n⚠️ Bugun dam olish kuni!"
 
         await update.message.reply_text(msg)
+
+        # ── Kechikkan xodimdan sabab so'rash ──
+        if result["status"] == "late":
+            today_str = datetime.now(tz).strftime("%Y-%m-%d")
+            pending_late_reason[user_id] = {"attempts": 0, "date": today_str}
+            await update.message.reply_text(
+                f"⚠️ Siz {result['late_minutes']} daqiqa kechikdingiz.\n"
+                "Iltimos, *kechikish sababini* yozib yuboring:",
+                parse_mode="Markdown",
+            )
+            # 5 daqiqadan so'ng birinchi eslatma
+            context.job_queue.run_once(
+                late_reason_reminder,
+                when=300,
+                data={"user_id": user_id, "attempt": 1},
+                name=f"late_reason_{user_id}",
+            )
 
         # Guruhga ham e'lon qilish
         if not is_group and config.GROUP_ID:
@@ -1229,6 +1291,52 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ro'yxatdan o'tish va admin tasdiqlash vaqtida ism matnini qabul qilish."""
     user_id = update.effective_user.id
+
+    # ── Kechikkan xodim sabab yozishi ──
+    if user_id in pending_late_reason:
+        reason = update.message.text.strip()
+        if len(reason) < 3:
+            await update.message.reply_text("Iltimos, sababni to'liq yozing (kamida 3 harf):")
+            return
+
+        # Eslatmalarni to'xtatamiz
+        for job in context.job_queue.get_jobs_by_name(f"late_reason_{user_id}"):
+            job.schedule_removal()
+
+        today_str = pending_late_reason.pop(user_id)["date"]
+        db.set_late_reason(user_id, today_str, reason)
+
+        emp = db.get_employee(user_id)
+        if emp:
+            branch = config.BRANCHES.get(emp["branch"], emp["branch"])
+            role = config.ROLE_LABELS.get(emp["role"], emp["role"])
+            msg = (
+                f"⚠️ *Kechikish sababi* ({branch} | {role})\n\n"
+                f"👤 {emp['name']}\n"
+                f"📝 Sabab: _{reason}_"
+            )
+            # Adminlarga
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
+                except Exception:
+                    pass
+            # Branch coordinatorga
+            for coord_id in config.COORDINATORS.get(emp["branch"], []):
+                try:
+                    await context.bot.send_message(coord_id, msg, parse_mode="Markdown")
+                except Exception:
+                    pass
+            # Ziyodaga
+            try:
+                await context.bot.send_message(909473085, msg, parse_mode="Markdown")
+            except Exception:
+                pass
+
+        await update.message.reply_text(
+            "✅ Sababingiz qabul qilindi. Keyingi safar o'z vaqtida kelishga harakat qiling! 😊"
+        )
+        return
 
     # Admin tasdiqlash jarayonida — ism kiritish
     if user_id in pending_approvals:
