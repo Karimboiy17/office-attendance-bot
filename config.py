@@ -68,6 +68,7 @@ if COORDINATORS_RAW:
 SHIFTS = {
     "morning": {"start": 8, "end": 14, "label": "Ertalab (08:00-14:00)"},
     "afternoon": {"start": 14, "end": 21, "label": "Kechki (14:00-21:00)"},
+    "afternoon_alt": {"start": 13, "end": 21, "label": "Kechki (13:00-21:00)"},
 }
 
 # Check-in deadline — necha daqiqagacha "on_time" hisoblanadi

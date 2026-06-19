@@ -80,7 +80,7 @@ def format_today_report(shift: str = None) -> str:
             for r in records:
                 lines.append(_format_status(r))
         else:
-            for shift_key in ["morning", "afternoon"]:
+            for shift_key in ["morning", "afternoon", "afternoon_alt"]:
                 shift_records = [r for r in records if r.get("shift") == shift_key]
                 if shift_records:
                     lines.append(f"⏰ {SHIFTS[shift_key]['label']}:")
@@ -333,7 +333,7 @@ def format_date_report(date_str: str) -> str:
         lines.append("Hech qanday yozuv yo'q.")
         return "\n".join(lines)
 
-    for shift_key in ["morning", "afternoon"]:
+    for shift_key in ["morning", "afternoon", "afternoon_alt"]:
         shift_records = [r for r in records if r.get("shift") == shift_key]
         if shift_records:
             lines.append(f"⏰ {SHIFTS[shift_key]['label']}:")

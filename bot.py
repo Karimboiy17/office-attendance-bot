@@ -480,7 +480,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
-    shift = context.args[0] if context.args and context.args[0] in ("morning", "afternoon") else None
+    shift = context.args[0] if context.args and context.args[0] in ("morning", "afternoon", "afternoon_alt") else None
     user_id = update.effective_user.id
     if not is_admin(user_id):
         branch = get_coordinator_branch(user_id)
@@ -556,7 +556,7 @@ async def absent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not has_access(update.effective_user.id):
         return
     shift = context.args[0] if context.args else None
-    if shift and shift not in ("morning", "afternoon"):
+    if shift and shift not in ("morning", "afternoon", "afternoon_alt"):
         shift = None
 
     # Hozirgi vaqtga qarab default shift
@@ -720,8 +720,8 @@ async def add_employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Noto'g'ri filial. Mavjud: {', '.join(config.BRANCH_LIST)}")
         return
 
-    if shift not in ("morning", "afternoon"):
-        await update.message.reply_text("Shift: morning yoki afternoon")
+    if shift not in ("morning", "afternoon", "afternoon_alt"):
+        await update.message.reply_text("Shift: morning, afternoon yoki afternoon_alt")
         return
 
     success = db.add_employee(tid, name, role, branch, shift)
@@ -1407,6 +1407,10 @@ async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🌙 Kechki (14:00-21:00)",
             callback_data=f"regshift_{branch}_afternoon"
         )],
+        [InlineKeyboardButton(
+            "🌙 Kechki (13:00-21:00)",
+            callback_data=f"regshift_{branch}_afternoon_alt"
+        )],
     ])
 
     await update.message.reply_text(
@@ -1454,7 +1458,32 @@ async def auto_check_afternoon(context: ContextTypes.DEFAULT_TYPE):
     if not missing:
         return
 
-    lines = [f"⚠️ *Kechki smena* — hali kelmaganlar (14:10):", ""]
+    lines = [f"⚠️ *Kechki smena (14:00-21:00)* — hali kelmaganlar (14:10):", ""]
+    for m in missing:
+        branch = config.BRANCHES.get(m["branch"], m["branch"])
+        role = config.ROLE_LABELS.get(m["role"], m["role"])
+        lines.append(f"❌ {m['name']} ({branch}, {role})")
+
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await context.bot.send_message(
+                admin_id,
+                "\n".join(lines),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"Admin {admin_id} ga xabar yuborib bo'lmadi: {e}")
+
+
+async def auto_check_afternoon_alt(context: ContextTypes.DEFAULT_TYPE):
+    """Avtomatik 13:10 — kechki smena (13:00-21:00) kelmaganlar."""
+    if is_sunday():
+        return
+    missing = db.get_missing_today("afternoon_alt")
+    if not missing:
+        return
+
+    lines = [f"⚠️ *Kechki smena (13:00-21:00)* — hali kelmaganlar (13:10):", ""]
     for m in missing:
         branch = config.BRANCHES.get(m["branch"], m["branch"])
         role = config.ROLE_LABELS.get(m["role"], m["role"])
@@ -1481,7 +1510,7 @@ async def shift_reminder(context: ContextTypes.DEFAULT_TYPE, shift: str):
         return
 
     shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
-    shift_time = "08:00" if shift == "morning" else "14:00"
+    shift_time = {"morning": "08:00", "afternoon": "14:00", "afternoon_alt": "13:00"}.get(shift, "13:00")
 
     for emp in employees:
         try:
@@ -1653,6 +1682,11 @@ def main():
         time=dt_time(hour=14, minute=10, tzinfo=tz),
         days=(0, 1, 2, 3, 4, 5),
     )
+    app.job_queue.run_daily(
+        auto_check_afternoon_alt,
+        time=dt_time(hour=13, minute=10, tzinfo=tz),
+        days=(0, 1, 2, 3, 4, 5),
+    )
 
     # Shift eslatmalari (10 daqiqa oldin)
     app.job_queue.run_daily(
@@ -1663,6 +1697,11 @@ def main():
     app.job_queue.run_daily(
         lambda ctx: shift_reminder(ctx, "afternoon"),
         time=dt_time(hour=13, minute=50, tzinfo=tz),
+        days=(0, 1, 2, 3, 4, 5),
+    )
+    app.job_queue.run_daily(
+        lambda ctx: shift_reminder(ctx, "afternoon_alt"),
+        time=dt_time(hour=12, minute=50, tzinfo=tz),
         days=(0, 1, 2, 3, 4, 5),
     )
 

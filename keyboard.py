@@ -61,7 +61,7 @@ def employees_list_keyboard(employees: list[dict]):
         from config import BRANCHES, ROLE_LABELS, SHIFTS
         branch = BRANCHES.get(emp["branch"], emp["branch"])
         role = ROLE_LABELS.get(emp["role"], emp["role"])
-        shift = "Ert" if emp["shift"] == "morning" else "Kech"
+        shift = "Ert" if emp["shift"] == "morning" else "Kech(14)" if emp["shift"] == "afternoon" else "Kech(13)"
         label = f"{emp['name']} ({branch}, {role}, {shift})"
         buttons.append([InlineKeyboardButton(
             label,
@@ -94,10 +94,17 @@ def work_time_keyboard(emp_id: int, current_start: str = None, current_end: str 
     """Xodim uchun oddiy ish vaqti tugmalari."""
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
     kb = []
-    btn_label = "🕐 08:00 dan 17:00 gacha"
+
+    btn_08 = "🕐 08:00 dan 17:00 gacha"
     if current_start == "08:00" and current_end == "17:00":
-        btn_label = "✅ " + btn_label
-    kb.append([InlineKeyboardButton(btn_label, callback_data=f"setsimple_{emp_id}_08:00_17:00")])
+        btn_08 = "✅ " + btn_08
+    kb.append([InlineKeyboardButton(btn_08, callback_data=f"setsimple_{emp_id}_08:00_17:00")])
+
+    btn_13 = "🕐 13:00 dan 21:00 gacha"
+    if current_start == "13:00" and current_end == "21:00":
+        btn_13 = "✅ " + btn_13
+    kb.append([InlineKeyboardButton(btn_13, callback_data=f"setsimple_{emp_id}_13:00_21:00")])
+
     if current_start or current_end:
         kb.append([InlineKeyboardButton("↩️ Default ga qaytarish", callback_data=f"setdefault_{emp_id}")])
     kb.append([InlineKeyboardButton("🔙 Orqaga", callback_data="worktime_cancel")])
@@ -113,7 +120,7 @@ def remove_employees_keyboard(employees: list[dict]):
         from config import BRANCHES, ROLE_LABELS
         branch = BRANCHES.get(emp["branch"], emp["branch"])
         role = ROLE_LABELS.get(emp["role"], emp["role"])
-        shift = "Ert" if emp["shift"] == "morning" else "Kech"
+        shift = "Ert" if emp["shift"] == "morning" else "Kech(14)" if emp["shift"] == "afternoon" else "Kech(13)"
         label = f"🗑️ {emp['name']} ({branch}, {role}, {shift})"
         buttons.append([InlineKeyboardButton(
             label,
