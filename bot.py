@@ -1,6 +1,7 @@
 """Office Attendance Bot — Asosiy fayl"""
 
 import logging
+import random
 from datetime import datetime, time as dt_time, timedelta
 import re
 import os
@@ -32,6 +33,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 tz = pytz.timezone(config.TIMEZONE)
+
+# Motivatsion gaplar — vaqtida kelgan xodimlarga random yuboriladi
+MOTIVATIONAL_PHRASES = [
+    "Har bir muvaffaqiyatli kun ertalab boshlanadi! Ertangi kunningiz yanada ajoyib bo'lsin! 🌅",
+    "O'z vaqtida kelish — professionallik belgisi. Ajoyib! 🏆",
+    "Vaqt — eng qadrli resurs, uni qadrlaganingiz uchun tashakkur! ⏰",
+    "Aynan shunday intizom bilan katta maqsadlarga erishiladi. Barakalla! 👏",
+    "Ertalabki ilk qadam — kuningiz muvaffaqiyatli bo'lishining garovi! 💪",
+    "Kunni to'g'ri boshlash — yarim g'alaba. Bugungi kun sizniki! ⚡",
+    "Sizning vaqtida kelishingiz jamoaga ijobiy o'rnak ko'rsatadi! 🌟",
+    "Aniq vaqtda ish boshlash — katta yutuqlarning asosi! 🔥",
+    "Rahbaringiz sizdan mamnun! Intizomli xodim har doim qadrlanadi! 👍",
+    "Kunni ijobiy boshladingiz — kuningiz barakali o'tsin! ✨",
+    "Bir daqiqa ham kechikmay kelish — bu yuqori darajadagi mas'uliyat! 🎯",
+    "Siz haqiqiy professional! Vaqtni aniq boshqarish — kuchli fazilat! 💎",
+    "Bugungi go'zal ish kuniga ilk qadamni qo'ydingiz. Omad! 🚀",
+    "Intizom — muvaffaqiyat kaliti. Siz buni bilasiz va amal qilasiz! 🔑",
+    "Kunning birinchi va eng muhim qadamini tashladingiz. Qolgani oson! 🏃",
+    "O'z vaqtida ishga kelish — bu o'z ishingizni hurmat qilishdir! 🙌",
+    "Ertalabki choy qancha mazali bo'lsa, vaqtida kelish ham shunchalik yoqimli! ☕",
+    "Siz ustozsiz! Intizom sizning kuchli tomoningiz. Shu davom eting! 🦁",
+    "Har bir on-time kelish — o'z ustingizdagi g'alaba! Tabriklayman! 🎉",
+    "Yaxshi boshlangan ish — yarmi bitgan ish. Kun muvaffaqiyatli bo'lsin! 🌈",
+]
 
 # Ro'yxatdan o'tish vaqtida xodim ma'lumotlarini saqlash
 # {user_id: {"branch": "...", "name": "...", "shift": "..."}}
@@ -170,9 +195,11 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         time_str = result["time"][:5]
 
         if result["status"] == "on_time":
+            phrase = random.choice(MOTIVATIONAL_PHRASES)
             msg = (
                 f"✅ {user.first_name} — Check-in: {time_str}\n"
-                f"📍 {branch} | 👤 {role} | O'z vaqtida"
+                f"📍 {branch} | 👤 {role} | O'z vaqtida\n\n"
+                f"💬 {phrase}"
             )
         else:
             msg = (
@@ -212,8 +239,9 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if branch_coordinators:
             status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
             branch_label = config.BRANCHES.get(emp["branch"], emp["branch"])
+            role_label = config.ROLE_LABELS.get(emp["role"], emp["role"])
             coordinator_msg = (
-                f"🏢 *{branch_label}* — Check-in\n\n"
+                f"🏢 *{branch_label}* ({role_label}) — Check-in\n\n"
                 f"👤 {emp['name']}\n"
                 f"🕐 {result['time'][:5]}\n"
                 f"📊 {status_text}"
@@ -366,9 +394,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = update.effective_user.first_name
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏢 Integro", callback_data="regbranch_integro")],
-        [InlineKeyboardButton("🏢 Amir Temur", callback_data="regbranch_amir_temur")],
-        [InlineKeyboardButton("🏢 Xalqlar", callback_data="regbranch_xalqlar")],
+        [InlineKeyboardButton("🏢 Integro (Office Manager)", callback_data="regbranch_integro")],
+        [InlineKeyboardButton("🏢 Amir Temur (Office Manager)", callback_data="regbranch_amir_temur")],
+        [InlineKeyboardButton("🏢 Xalqlar (Office Manager)", callback_data="regbranch_xalqlar")],
         [InlineKeyboardButton("💻 Online", callback_data="regbranch_online")],
         [InlineKeyboardButton("📚 Academic Support", callback_data="regbranch_academic_support")],
     ])
@@ -756,11 +784,11 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             "Filialni tanlang:",
             reply_markup=keyboard.branches_keyboard(),
         )
-    elif text == "🏢 Integro":
+    elif text == "🏢 Integro (Office Manager)":
         await show_branch_report(update, "integro")
-    elif text == "🏢 Amir Temur":
+    elif text == "🏢 Amir Temur (Office Manager)":
         await show_branch_report(update, "amir_temur")
-    elif text == "🏢 Xalqlar":
+    elif text == "🏢 Xalqlar (Office Manager)":
         await show_branch_report(update, "xalqlar")
     elif text == "🏢 Online":
         await show_branch_report(update, "online")
@@ -1450,7 +1478,7 @@ def main():
         "⚠️ Kechikkanlar", "❌ Kelmaganlar",
         "👥 Xodimlar", "🏢 Filiallar", "🗑️ Xodimni o'chirish",
         "🕐 Ish vaqtini o'zgartirish",
-        "🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online",
+        "🏢 Integro (Office Manager)", "🏢 Amir Temur (Office Manager)", "🏢 Xalqlar (Office Manager)", "🏢 Online",
         "📚 Academic Support",
         "🔙 Orqaga",
         # Xodim tugmalari

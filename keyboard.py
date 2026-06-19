@@ -44,7 +44,7 @@ def branches_keyboard():
     """Filial tanlash uchun."""
     return ReplyKeyboardMarkup(
         [
-            ["🏢 Integro", "🏢 Amir Temur", "🏢 Xalqlar", "🏢 Online"],
+            ["🏢 Integro (Office Manager)", "🏢 Amir Temur (Office Manager)", "🏢 Xalqlar (Office Manager)", "🏢 Online"],
             ["📚 Academic Support"],
             ["🔙 Orqaga"],
         ],
