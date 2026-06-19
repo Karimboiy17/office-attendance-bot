@@ -1154,6 +1154,33 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
                 )
             except Exception as e:
                 logger.error(f"Xodimga xabar: {e}")
+
+            # Coordinator va Ziyodaga xabar
+            notification_msg = (
+                f"✅ *Yangi xodim qo'shildi!*\n\n"
+                f"👤 {telegram_name}\n"
+                f"📍 {branch_label}\n"
+                f"🕐 {shift_label}\n"
+                f"🆔 `{new_user_id}`"
+            )
+            # Branch coordinatorlariga
+            branch_coords = config.COORDINATORS.get(branch, [])
+            for coord_id in branch_coords:
+                try:
+                    await context.bot.send_message(
+                        coord_id, notification_msg,
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.error(f"Coordinator {coord_id} ga xabar: {e}")
+            # Ziyodaga umumiy coordinator
+            try:
+                await context.bot.send_message(
+                    909473085, notification_msg,
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.error(f"Ziyodaga xabar: {e}")
         else:
             await query.edit_message_text(
                 query.message.text + "\n\n❌ *Xatolik yuz berdi*",
