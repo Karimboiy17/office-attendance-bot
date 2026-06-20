@@ -1662,6 +1662,36 @@ def start_health_server():
 #  MAIN
 # ══════════════════════════════════════
 
+async def auto_notify_on_startup(app: Application):
+    """Bot restart qilinganda bugun kelgan xodimlarga avtomatik xabar yuborish."""
+    logger.info("🔄 Bot restart — avtomatik xabarnoma yuborilmoqda...")
+
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    records = db.get_date_attendance(today)
+    if not records:
+        logger.info("Bugun hech kim kelmagan, xabarnoma yuborilmadi.")
+        return
+
+    sent = 0
+    failed = 0
+    for r in records:
+        emp_id = r["employee_id"]
+        msg = (
+            "🔄 *Bot yangilandi!*\n\n"
+            "Ma'lumotlaringiz yangilangan.\n"
+            "Iltimos, botga *men yangiladim* deb yozing. "
+            "Shunda ma'lumotlaringiz yangilanadi."
+        )
+        try:
+            await app.bot.send_message(emp_id, msg, parse_mode="Markdown")
+            sent += 1
+        except Exception as e:
+            logger.error(f"Xabarni yuborib bo'lmadi {emp_id}: {e}")
+            failed += 1
+
+    logger.info(f"✅ {sent} ta xodimga xabar yuborildi" + (f", {failed} ta yuborilmadi" if failed else ""))
+
+
 def main():
     """Botni ishga tushirish."""
     logger.info("Bot ishga tushmoqda...")
@@ -1685,8 +1715,8 @@ def main():
     else:
         logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
  
-     # Application
-    app = Application.builder().token(config.BOT_TOKEN).build()
+     # Application (post_init orqali auto-notify)
+    app = Application.builder().token(config.BOT_TOKEN).post_init(auto_notify_on_startup).build()
 
     # --- Admin komandalari (faqat private) ---
     app.add_handler(CommandHandler("start", start))
