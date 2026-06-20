@@ -17,7 +17,7 @@ def _format_status(record: dict) -> str:
     check_in = record.get("check_in_time", "")[:5] if record.get("check_in_time") else "—"
     role = ROLE_LABELS.get(record.get("role", ""), record.get("role", ""))
 
-    line = f"{icon} {name} ({branch}, {role}) — {check_in}"
+    line = f"{icon} {name} ({branch}) {role} — {check_in}"
 
     if record["status"] == "late" and record.get("late_minutes", 0) > 0:
         line += f" (⏰ {record['late_minutes']} min kech)"
@@ -41,7 +41,7 @@ def _format_missing(emp: dict) -> str:
         shift = f"Custom ({emp['custom_work_start']}-{emp.get('custom_work_end', '?')})"
     else:
         shift = SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
-    return f"❌ {name} ({branch}, {role}, {shift})"
+    return f"❌ {name} ({branch}) {role} · {shift}"
 
 
 def format_today_report(shift: str = None) -> str:

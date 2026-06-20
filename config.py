@@ -21,17 +21,25 @@ BRANCHES = {
     "xalqlar": "Xalqlar Do'stligi",
     "online": "Online",
     "academic_support": "Academic Support",
+    "academic": "Academic Support",  # backward compat
 }
 
 BRANCH_LIST = list(BRANCHES.keys())
 
 # ── Rollar ──
 ROLES = ["office_manager", "cashier", "coordinator", "academic_support"]
+ROLE_EMOJIS = {
+    "office_manager": "👔",
+    "cashier": "💰",
+    "coordinator": "📋",
+    "academic_support": "📚",
+}
+
 ROLE_LABELS = {
-    "office_manager": "Office Manager",
-    "cashier": "Kassir",
-    "coordinator": "Koordinator",
-    "academic_support": "Academic Support",
+    "office_manager": "👔 Office Manager",
+    "cashier": "💰 Kassir",
+    "coordinator": "📋 Koordinator",
+    "academic_support": "📚 Academic Support",
 }
 
 # ── Support Coordinator ──
