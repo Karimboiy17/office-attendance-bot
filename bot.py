@@ -1619,9 +1619,7 @@ async def notify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emp_id = r["employee_id"]
         msg = (
             "🔄 *Bot yangilandi!*\n\n"
-            "Ma'lumotlaringiz yangilangan.\n"
-            "Iltimos, botga *men yangiladim* deb yozing. "
-            "Shunda ma'lumotlaringiz yangilanadi."
+            "Iltimos, /start ni bosing. ✅"
         )
         try:
             await context.bot.send_message(emp_id, msg, parse_mode="Markdown")
@@ -1678,9 +1676,7 @@ async def auto_notify_on_startup(app: Application):
         emp_id = r["employee_id"]
         msg = (
             "🔄 *Bot yangilandi!*\n\n"
-            "Ma'lumotlaringiz yangilangan.\n"
-            "Iltimos, botga *men yangiladim* deb yozing. "
-            "Shunda ma'lumotlaringiz yangilanadi."
+            "Iltimos, /start ni bosing. ✅"
         )
         try:
             await app.bot.send_message(emp_id, msg, parse_mode="Markdown")
