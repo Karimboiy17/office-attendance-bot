@@ -4,6 +4,14 @@ from config import BRANCHES, ROLE_LABELS, SHIFTS
 import db
 
 
+ROLE_EMOJI_ONLY = {
+    "office_manager": "",
+    "academic_support": "📚",
+    "cashier": "💰",
+    "coordinator": "📋",
+}
+
+
 def _format_status(record: dict) -> str:
     """Bir attendance yozuvini bir qator formatda chiqarish."""
     status_map = {
@@ -15,9 +23,16 @@ def _format_status(record: dict) -> str:
     name = record.get("name", str(record["employee_id"]))
     branch = BRANCHES.get(record.get("branch", ""), record.get("branch", ""))
     check_in = record.get("check_in_time", "")[:5] if record.get("check_in_time") else "—"
-    role = ROLE_LABELS.get(record.get("role", ""), record.get("role", ""))
+    role = record.get("role", "office_manager")
+    role_emoji = ROLE_EMOJI_ONLY.get(role, "")
 
-    line = f"{icon} {name} ({branch}) {role} — {check_in}"
+    parts = [f"{icon} {name}"]
+    parts.append(f"({branch})")
+    if role_emoji:
+        parts.append(role_emoji)
+    parts.append("—")
+    parts.append(check_in)
+    line = " ".join(parts)
 
     if record["status"] == "late" and record.get("late_minutes", 0) > 0:
         line += f" (⏰ {record['late_minutes']} min kech)"
@@ -35,13 +50,20 @@ def _format_missing(emp: dict) -> str:
     """Kelmagan xodim qatori."""
     name = emp["name"]
     branch = BRANCHES.get(emp["branch"], emp["branch"])
-    role = ROLE_LABELS.get(emp["role"], emp["role"])
+    role = emp.get("role", "office_manager")
+    role_emoji = ROLE_EMOJI_ONLY.get(role, "")
     # custom_work_start/end bor bo'lsa, shift label o'rniga shuni ko'rsat
     if emp.get("custom_work_start"):
         shift = f"Custom ({emp['custom_work_start']}-{emp.get('custom_work_end', '?')})"
     else:
         shift = SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
-    return f"❌ {name} ({branch}) {role} · {shift}"
+
+    parts = [f"❌ {name}", f"({branch})"]
+    if role_emoji:
+        parts.append(role_emoji)
+    parts.append("·")
+    parts.append(shift)
+    return " ".join(parts)
 
 
 def format_today_report(shift: str = None) -> str:

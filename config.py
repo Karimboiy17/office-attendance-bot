@@ -22,6 +22,7 @@ BRANCHES = {
     "online": "Online",
     "academic_support": "Academic Support",
     "academic": "Academic Support",  # backward compat
+    "amir": "Amir Temur",  # backward compat
 }
 
 BRANCH_LIST = list(BRANCHES.keys())
