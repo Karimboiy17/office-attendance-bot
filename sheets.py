@@ -318,6 +318,86 @@ def load_employees_from_sheets():
     return employees
 
 
+def load_attendance_from_sheets(target_date: str = None):
+    """Sheets dan attendance yozuvlarini yuklash (bot restart da) — barcha Davomat_* worksheet lardan."""
+    from db import add_attendance_record, get_employee
+
+    if target_date is None:
+        from datetime import datetime
+        from config import TIMEZONE
+        import pytz
+        tz = pytz.timezone(TIMEZONE)
+        target_date = datetime.now(tz).strftime("%Y-%m-%d")
+
+    sheet = _get_sheet()
+    if not sheet:
+        return []
+
+    records = []
+    for ws in sheet.worksheets():
+        title = ws.title
+        if not title.startswith("Davomat_"):
+            continue
+        try:
+            rows = ws.get_all_records()
+            for row in rows:
+                if row.get("date") == target_date:
+                    try:
+                        emp_id = int(row.get("employee_id", 0))
+                        check_in = row.get("check_in_time", "")
+                        if not emp_id or not check_in:
+                            continue
+                        emp = get_employee(emp_id)
+                        if not emp:
+                            continue
+                        check_out = row.get("check_out_time", "") or None
+                        status = row.get("status", "on_time")
+                        late_min = int(row.get("late_minutes", 0) or 0)
+                        video_id = row.get("check_in_video_id", "") or None
+                        add_attendance_record(emp_id, target_date, check_in, status, late_min, video_id, check_out)
+                        records.append({
+                            "employee_id": emp_id, "date": target_date,
+                            "check_in_time": check_in, "status": status,
+                            "name": emp.get("name", ""),
+                        })
+                    except (ValueError, KeyError) as e:
+                        print(f"[Sheets] {title} attendance qator xatolik: {e}")
+        except Exception as e:
+            print(f"[Sheets] {title} o'qish xatolik: {e}")
+
+    return records
+
+
+def refresh_employee_from_sheets(telegram_id: int) -> dict | None:
+    """Bitta xodimni Sheets dan qayta yuklash (role/branch/shift yangilash)."""
+    from db import get_employee, update_employee_fields
+
+    sheet = _get_sheet()
+    if not sheet:
+        return None
+
+    for ws in sheet.worksheets():
+        title = ws.title
+        if not title.startswith("Xodimlar_"):
+            continue
+        try:
+            rows = ws.get_all_records()
+            for row in rows:
+                try:
+                    if int(row.get("telegram_id", 0)) == telegram_id:
+                        name = row.get("name", "")
+                        role = row.get("role", "office_manager")
+                        branch = row.get("branch", "integro")
+                        shift = row.get("shift", "morning")
+                        update_employee_fields(telegram_id, name=name, role=role, branch=branch, shift=shift)
+                        return {"telegram_id": telegram_id, "name": name, "role": role, "branch": branch, "shift": shift}
+                except (ValueError, KeyError):
+                    continue
+        except Exception:
+            continue
+    return None
+
+
 def sync_deletions_from_sheets():
     """Sheets dan o'chirilgan xodimlarni DB dan o'chirish (bot restart da)."""
     from db import get_all_employees, remove_employee

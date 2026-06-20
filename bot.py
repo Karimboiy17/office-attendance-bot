@@ -1288,6 +1288,39 @@ async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
 #  RO'YXATDAN O'TISH — ISM KIRITISH
 # ══════════════════════════════════════
 
+async def men_yangilandim(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """'men yangilandim' matni — xodim ma'lumotlarini Sheets dan qayta yuklaydi."""
+    user_id = update.effective_user.id
+    text = (update.message.text or "").strip().lower()
+
+    if "men yangilandim" not in text and "men yangiladim" not in text:
+        return  # pastga o'tadi
+
+    emp = db.get_employee(user_id)
+    if not emp:
+        await update.message.reply_text("❌ Siz tizimda ro'yxatdan o'tmagansiz. Iltimos botga /start bosing.")
+        return
+
+    # Sheets dan qayta yuklash
+    updated = sheets.refresh_employee_from_sheets(user_id)
+    if updated:
+        emp = db.get_employee(user_id)
+        role_label = config.ROLE_LABELS.get(emp.get("role", ""), emp.get("role", ""))
+        branch_label = config.BRANCHES.get(emp.get("branch", ""), emp.get("branch", ""))
+        await update.message.reply_text(
+            f"✅ Ma'lumotlaringiz yangilandi!\n\n"
+            f"👤 {emp['name']}\n"
+            f"🏢 {branch_label}\n"
+            f"📋 {role_label}\n"
+            f"⏰ Smena: {emp.get('shift', 'morning')}\n\n"
+            f"🔁 /start bosing."
+        )
+    else:
+        await update.message.reply_text("✅ Ma'lumotlaringiz tekshirildi, hammasi yangi.")
+
+    return  # stop — boshqa handlerlar ishlamaydi
+
+
 async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ro'yxatdan o'tish va admin tasdiqlash vaqtida ism matnini qabul qilish."""
     user_id = update.effective_user.id
@@ -1567,6 +1600,42 @@ async def sheets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def notify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bugun kelgan xodimlarga xabar yuborish (admin uchun)."""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Faqat adminlar uchun.")
+        return
+
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    records = db.get_date_attendance(today)
+    if not records:
+        await update.message.reply_text("❌ Bugun hech kim kelmagan.")
+        return
+
+    sent = 0
+    failed = 0
+    for r in records:
+        emp_id = r["employee_id"]
+        msg = (
+            "🔄 *Bot yangilandi!*\n\n"
+            "Ma'lumotlaringiz yangilangan.\n"
+            "Iltimos, botga *men yangiladim* deb yozing. "
+            "Shunda ma'lumotlaringiz yangilanadi."
+        )
+        try:
+            await context.bot.send_message(emp_id, msg, parse_mode="Markdown")
+            sent += 1
+        except Exception as e:
+            logger.error(f"Xabarni yuborib bo'lmadi {emp_id}: {e}")
+            failed += 1
+
+    await update.message.reply_text(
+        f"✅ {sent} ta xodimga xabar yuborildi."
+        + (f"\n❌ {failed} ta xodimga yuborilmadi (botni blocklagan)." if failed else "")
+    )
+
+
 # ══════════════════════════════════════
 #  HEALTH CHECK HTTP SERVER (Railway uchun)
 # ══════════════════════════════════════
@@ -1608,10 +1677,15 @@ def main():
     if sheets_ok:
         logger.info("✅ Google Sheets auth muvaffaqiyatli!")
         sheets.load_employees_from_sheets()
+        sheets.sync_deletions_from_sheets()
+        # Attendance yozuvlarini ham Sheets dan tiklash (agar DB tozalanib ketgan bo'lsa)
+        restored = sheets.load_attendance_from_sheets()
+        if restored:
+            logger.info(f"📋 Sheets dan {len(restored)} ta attendance yozuvi tiklandi")
     else:
         logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
-
-    # Application
+ 
+     # Application
     app = Application.builder().token(config.BOT_TOKEN).build()
 
     # --- Admin komandalari (faqat private) ---
@@ -1629,6 +1703,7 @@ def main():
     app.add_handler(CommandHandler("add", add_employee_cmd))
     app.add_handler(CommandHandler("remove", remove_employee_cmd))
     app.add_handler(CommandHandler("sheets", sheets_cmd))
+    app.add_handler(CommandHandler("notify", notify_cmd))
 
     # --- Guruhdagi video handler ---
     app.add_handler(MessageHandler(
@@ -1653,6 +1728,13 @@ def main():
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.Regex(f"^({escaped})$"),
         handle_admin_buttons,
+    ))
+
+    # "men yangilandim" — xodim ma'lumotlarini yangilash
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE
+        & filters.Regex(r"(?i)^men\s+yangilandim$|^men\s+yangiladim$"),
+        men_yangilandim,
     ))
 
     # Ro'yxatdan o'tish — ism kiritish (Private, TEXT, tugma emas, komanda emas)

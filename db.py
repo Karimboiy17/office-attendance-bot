@@ -168,6 +168,53 @@ def get_employees_by_branch(branch: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def update_employee_fields(telegram_id: int, **kwargs) -> bool:
+    """Xodim maydonlarini yangilash (name, role, branch, shift)."""
+    allowed = {"name", "role", "branch", "shift", "active", "custom_work_start", "custom_work_end"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not updates:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [telegram_id]
+    conn = get_conn()
+    try:
+        conn.execute(f"UPDATE employees SET {set_clause} WHERE telegram_id = ?", values)
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[DB] update_employee_fields error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
+def add_attendance_record(employee_id: int, target_date: str, check_in_time: str,
+                          status: str = "on_time", late_minutes: int = 0,
+                          check_in_video_id: str = None, check_out_time: str = None) -> bool:
+    """Sheets dan qayta tiklash uchun — to'g'ridan-to'g'ri attendance yozuvini qo'shadi."""
+    conn = get_conn()
+    try:
+        conn.execute("""
+            INSERT INTO attendance (employee_id, date, check_in_time, check_out_time,
+                                    check_in_video_id, status, late_minutes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(employee_id, date) DO UPDATE SET
+                check_in_time = excluded.check_in_time,
+                check_out_time = excluded.check_out_time,
+                check_in_video_id = excluded.check_in_video_id,
+                status = excluded.status,
+                late_minutes = excluded.late_minutes
+        """, (employee_id, target_date, check_in_time, check_out_time,
+              check_in_video_id, status, late_minutes))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"[DB] add_attendance_record error: {e}")
+        return False
+    finally:
+        conn.close()
+
+
 def update_employee_work_time(employee_id: int, field: str, time_str: str) -> bool:
     """Xodimning custom_work_start yoki custom_work_end ni doimiy o'zgartirish.
     field: 'checkin' -> custom_work_start, 'checkout' -> custom_work_end
