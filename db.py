@@ -158,11 +158,19 @@ def get_employees_by_shift(shift: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _resolve_academic_branches(branch: str) -> list[str]:
+    """academic va academic_support ni bitta filial deb hisoblash."""
+    if branch in ("academic", "academic_support"):
+        return ["academic", "academic_support"]
+    return [branch]
+
 def get_employees_by_branch(branch: str) -> list[dict]:
+    branches = _resolve_academic_branches(branch)
+    placeholders = ",".join("?" for _ in branches)
     conn = get_conn()
     rows = conn.execute(
-        "SELECT * FROM employees WHERE active = 1 AND branch = ? ORDER BY shift, name",
-        (branch,)
+        f"SELECT * FROM employees WHERE active = 1 AND branch IN ({placeholders}) ORDER BY shift, name",
+        branches
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -602,28 +610,34 @@ def get_branch_attendance(branch: str, target_date: str = None) -> list[dict]:
     if target_date is None:
         target_date = datetime.now(tz).strftime("%Y-%m-%d")
 
+    branches = _resolve_academic_branches(branch)
+    placeholders = ",".join("?" for _ in branches)
+
     conn = get_conn()
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT a.*, e.name, e.role, e.branch, e.shift
         FROM attendance a
         JOIN employees e ON a.employee_id = e.telegram_id
-        WHERE e.branch = ? AND a.date = ?
+        WHERE e.branch IN ({placeholders}) AND a.date = ?
         ORDER BY e.shift, e.name
-    """, (branch, target_date)).fetchall()
+    """, (*branches, target_date)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 def get_branch_attendance_range(branch: str, start_date: str, end_date: str) -> list[dict]:
     """Bir filial oralig'idagi hisoboti."""
+    branches = _resolve_academic_branches(branch)
+    placeholders = ",".join("?" for _ in branches)
+
     conn = get_conn()
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT a.*, e.name, e.role, e.branch, e.shift
         FROM attendance a
         JOIN employees e ON a.employee_id = e.telegram_id
-        WHERE e.branch = ? AND a.date >= ? AND a.date <= ?
+        WHERE e.branch IN ({placeholders}) AND a.date >= ? AND a.date <= ?
         ORDER BY a.date DESC, e.shift, e.name
-    """, (branch, start_date, end_date)).fetchall()
+    """, (*branches, start_date, end_date)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

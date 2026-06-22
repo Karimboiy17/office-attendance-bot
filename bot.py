@@ -282,7 +282,7 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
 
         # Academic Support → support coordinator ga xabar
-        if emp["branch"] == "academic_support":
+        if emp["branch"] in ("academic_support", "academic"):
             status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
             try:
                 await context.bot.send_message(
@@ -297,7 +297,11 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
 
         # Koordinatorlarga xabar va video yuborish
-        branch_coordinators = config.COORDINATORS.get(emp["branch"], [])
+        emp_branch = emp["branch"]
+        branch_coordinators = config.COORDINATORS.get(emp_branch, [])
+        # Academic branch xodimlari ham academic_support coordinatorlariga xabar olsin
+        if not branch_coordinators and emp_branch == "academic":
+            branch_coordinators = config.COORDINATORS.get("academic_support", [])
         if branch_coordinators:
             status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
             branch_label = config.BRANCHES.get(emp["branch"], emp["branch"])
@@ -359,7 +363,7 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
 
         # Academic Support → support coordinator ga xabar (check-out)
-        if emp["branch"] == "academic_support":
+        if emp["branch"] in ("academic_support", "academic"):
             try:
                 await context.bot.send_message(
                     config.SUPPORT_COORDINATOR_ID,
