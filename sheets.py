@@ -319,15 +319,10 @@ def load_employees_from_sheets():
 
 
 def load_attendance_from_sheets(target_date: str = None):
-    """Sheets dan attendance yozuvlarini yuklash (bot restart da) — barcha Davomat_* worksheet lardan."""
+    """Sheets dan attendance yozuvlarini yuklash (bot restart da) — barcha Davomat_* worksheet lardan.
+    Agar target_date=None bo'lsa, BARCHA sanalardagi yozuvlarni yuklaydi.
+    """
     from db import add_attendance_record, get_employee
-
-    if target_date is None:
-        from datetime import datetime
-        from config import TIMEZONE
-        import pytz
-        tz = pytz.timezone(TIMEZONE)
-        target_date = datetime.now(tz).strftime("%Y-%m-%d")
 
     sheet = _get_sheet()
     if not sheet:
@@ -341,27 +336,29 @@ def load_attendance_from_sheets(target_date: str = None):
         try:
             rows = ws.get_all_records()
             for row in rows:
-                if row.get("date") == target_date:
-                    try:
-                        emp_id = int(row.get("employee_id", 0))
-                        check_in = row.get("check_in_time", "")
-                        if not emp_id or not check_in:
-                            continue
-                        emp = get_employee(emp_id)
-                        if not emp:
-                            continue
-                        check_out = row.get("check_out_time", "") or None
-                        status = row.get("status", "on_time")
-                        late_min = int(row.get("late_minutes", 0) or 0)
-                        video_id = row.get("check_in_video_id", "") or None
-                        add_attendance_record(emp_id, target_date, check_in, status, late_min, video_id, check_out)
-                        records.append({
-                            "employee_id": emp_id, "date": target_date,
-                            "check_in_time": check_in, "status": status,
-                            "name": emp.get("name", ""),
-                        })
-                    except (ValueError, KeyError) as e:
-                        print(f"[Sheets] {title} attendance qator xatolik: {e}")
+                row_date = row.get("date", "")
+                if target_date is not None and row_date != target_date:
+                    continue
+                try:
+                    emp_id = int(row.get("employee_id", 0))
+                    check_in = row.get("check_in_time", "")
+                    if not emp_id or not check_in:
+                        continue
+                    emp = get_employee(emp_id)
+                    if not emp:
+                        continue
+                    check_out = row.get("check_out_time", "") or None
+                    status = row.get("status", "on_time")
+                    late_min = int(row.get("late_minutes", 0) or 0)
+                    video_id = row.get("check_in_video_id", "") or None
+                    add_attendance_record(emp_id, row_date, check_in, status, late_min, video_id, check_out)
+                    records.append({
+                        "employee_id": emp_id, "date": row_date,
+                        "check_in_time": check_in, "status": status,
+                        "name": emp.get("name", ""),
+                    })
+                except (ValueError, KeyError) as e:
+                    print(f"[Sheets] {title} attendance qator xatolik: {e}")
         except Exception as e:
             print(f"[Sheets] {title} o'qish xatolik: {e}")
 

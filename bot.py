@@ -580,9 +580,9 @@ async def branch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = update.effective_user.id
 
-    # Koordinator faqat o'z filialini ko'radi
+    user_id = update.effective_user.id
     if not is_admin(user_id):
-        if is_coordinator(user_id):
+        if is_coordinator(user_id) or is_support_coordinator(user_id):
             branch = get_coordinator_branch(user_id)
             if branch:
                 text = report.format_branch_report(branch)
@@ -635,7 +635,7 @@ async def list_employees_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     user_id = update.effective_user.id
     if not is_admin(user_id):
-        if is_coordinator(user_id):
+        if is_coordinator(user_id) or is_support_coordinator(user_id):
             branch = get_coordinator_branch(user_id)
             if branch:
                 employees = db.get_employees_by_branch(branch)
@@ -1704,7 +1704,7 @@ def main():
         logger.info("✅ Google Sheets auth muvaffaqiyatli!")
         sheets.load_employees_from_sheets()
         sheets.sync_deletions_from_sheets()
-        # Attendance yozuvlarini ham Sheets dan tiklash (agar DB tozalanib ketgan bo'lsa)
+        # Attendance yozuvlarini ham Sheets dan tiklash — BARCHA sanalar
         restored = sheets.load_attendance_from_sheets()
         if restored:
             logger.info(f"📋 Sheets dan {len(restored)} ta attendance yozuvi tiklandi")
