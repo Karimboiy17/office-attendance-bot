@@ -28,12 +28,13 @@ BRANCHES = {
 BRANCH_LIST = list(BRANCHES.keys())
 
 # ── Rollar ──
-ROLES = ["office_manager", "cashier", "coordinator", "academic_support"]
+ROLES = ["office_manager", "cashier", "coordinator", "academic_support", "academic_support_coordinator"]
 ROLE_EMOJIS = {
     "office_manager": "👔",
     "cashier": "💰",
     "coordinator": "📋",
     "academic_support": "📚",
+    "academic_support_coordinator": "👑",
 }
 
 ROLE_LABELS = {
@@ -41,6 +42,7 @@ ROLE_LABELS = {
     "cashier": "💰 Kassir",
     "coordinator": "📋 Koordinator",
     "academic_support": "📚 Academic Support",
+    "academic_support_coordinator": "👑 Academic Support Koordinatori",
 }
 
 # ── Support Coordinator ──

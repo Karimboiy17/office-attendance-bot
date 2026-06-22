@@ -9,6 +9,7 @@ ROLE_EMOJI_ONLY = {
     "academic_support": "📚",
     "cashier": "💰",
     "coordinator": "📋",
+    "academic_support_coordinator": "👑",
 }
 
 
