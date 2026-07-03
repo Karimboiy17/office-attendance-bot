@@ -647,50 +647,57 @@ def get_missing_today(shift: str = None) -> list[dict]:
     today_str = datetime.now(tz).strftime("%Y-%m-%d")
     conn = get_conn()
 
+    # Coordinatorlarni kelmaganlar ro'yxatidan chiqarish
+    coordinator_filter = "AND e.role NOT IN ('coordinator', 'academic_support_coordinator')"
+
     if shift:
         # custom_work_start ni ham hisobga olish:
         # morning: shift="morning" YOKI custom_work_start < "12:00"
         # afternoon: shift="afternoon" YOKI custom_work_start >= "12:00" (lekin afternoon_alt emas)
         # afternoon_alt: shift="afternoon_alt"
         if shift == "morning":
-            query = """
+            query = f"""
                 SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
                        e.custom_work_start, e.custom_work_end
                 FROM employees e
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
+                  {coordinator_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start < '12:00'))
             """
         elif shift == "afternoon_alt":
-            query = """
+            query = f"""
                 SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
                        e.custom_work_start, e.custom_work_end
                 FROM employees e
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
+                  {coordinator_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start >= '12:00'
                            AND e.custom_work_start < '14:00'))
             """
         else:  # afternoon
-            query = """
+            query = f"""
                 SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
                        e.custom_work_start, e.custom_work_end
                 FROM employees e
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
+                  {coordinator_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start >= '14:00'))
             """
         rows = conn.execute(query, (today_str, shift)).fetchall()
     else:
-        query = """
+        query = f"""
             SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
                    e.custom_work_start, e.custom_work_end
             FROM employees e
             LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
             WHERE e.active = 1 AND a.id IS NULL
+              {coordinator_filter}
         """
         rows = conn.execute(query, (today_str,)).fetchall()
 
