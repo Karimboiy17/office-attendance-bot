@@ -2,7 +2,7 @@
 
 import sqlite3
 from datetime import datetime, date
-from config import TIMEZONE
+from config import TIMEZONE, COORDINATOR_IDS
 import pytz
 
 DB_PATH = "attendance.db"
@@ -647,8 +647,13 @@ def get_missing_today(shift: str = None) -> list[dict]:
     today_str = datetime.now(tz).strftime("%Y-%m-%d")
     conn = get_conn()
 
-    # Coordinatorlarni kelmaganlar ro'yxatidan chiqarish
     coordinator_filter = "AND e.role NOT IN ('coordinator', 'academic_support_coordinator')"
+
+    # COORDINATOR_IDS dagi xodimlarni ham tashlab ketish
+    coord_id_filter = ""
+    if COORDINATOR_IDS:
+        placeholders = ",".join("?" for _ in COORDINATOR_IDS)
+        coord_id_filter = f" AND e.telegram_id NOT IN ({placeholders})"
 
     if shift:
         # custom_work_start ni ham hisobga olish:
@@ -663,6 +668,7 @@ def get_missing_today(shift: str = None) -> list[dict]:
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
                   {coordinator_filter}
+                  {coord_id_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start < '12:00'))
             """
@@ -674,6 +680,7 @@ def get_missing_today(shift: str = None) -> list[dict]:
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
                   {coordinator_filter}
+                  {coord_id_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start >= '12:00'
                            AND e.custom_work_start < '14:00'))
@@ -686,10 +693,11 @@ def get_missing_today(shift: str = None) -> list[dict]:
                 LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
                 WHERE e.active = 1 AND a.id IS NULL
                   {coordinator_filter}
+                  {coord_id_filter}
                   AND (e.shift = ?
                        OR (e.custom_work_start IS NOT NULL AND e.custom_work_start >= '14:00'))
             """
-        rows = conn.execute(query, (today_str, shift)).fetchall()
+        rows = conn.execute(query, (today_str, *COORDINATOR_IDS, shift)).fetchall()
     else:
         query = f"""
             SELECT e.telegram_id, e.name, e.role, e.branch, e.shift,
@@ -698,8 +706,9 @@ def get_missing_today(shift: str = None) -> list[dict]:
             LEFT JOIN attendance a ON e.telegram_id = a.employee_id AND a.date = ?
             WHERE e.active = 1 AND a.id IS NULL
               {coordinator_filter}
+              {coord_id_filter}
         """
-        rows = conn.execute(query, (today_str,)).fetchall()
+        rows = conn.execute(query, (today_str, *COORDINATOR_IDS)).fetchall()
 
     conn.close()
     return [dict(r) for r in rows]
