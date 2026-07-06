@@ -72,9 +72,6 @@ pending_late_reason = {}
 # Maksimum necha marta sabab so'raladi
 MAX_LATE_REASON_ATTEMPTS = 3
 
-# Bot paused? — True bo'lsa avtomatik xabarlar yuborilmaydi
-is_paused = False
-
 
 # ══════════════════════════════════════
 #  HELPERS
@@ -1469,9 +1466,6 @@ async def auto_check_morning(context: ContextTypes.DEFAULT_TYPE):
     """Avtomatik 08:10 — ertalabki smena kelmaganlar."""
     if is_sunday():
         return  # Yakshanba tekshirmaymiz
-    if is_paused:
-        logger.info("Bot paused — auto_check_morning skipped")
-        return
     missing = db.get_missing_today("morning")
     if not missing:
         return
@@ -1496,9 +1490,6 @@ async def auto_check_morning(context: ContextTypes.DEFAULT_TYPE):
 async def auto_check_afternoon(context: ContextTypes.DEFAULT_TYPE):
     """Avtomatik 14:10 — kechki smena kelmaganlar."""
     if is_sunday():
-        return
-    if is_paused:
-        logger.info("Bot paused — auto_check_afternoon skipped")
         return
     missing = db.get_missing_today("afternoon")
     if not missing:
@@ -1525,9 +1516,6 @@ async def auto_check_afternoon_alt(context: ContextTypes.DEFAULT_TYPE):
     """Avtomatik 13:10 — kechki smena (13:00-21:00) kelmaganlar."""
     if is_sunday():
         return
-    if is_paused:
-        logger.info("Bot paused — auto_check_afternoon_alt skipped")
-        return
     missing = db.get_missing_today("afternoon_alt")
     if not missing:
         return
@@ -1553,9 +1541,6 @@ async def shift_reminder(context: ContextTypes.DEFAULT_TYPE, shift: str):
     """Smenadan 10 daqiqa oldin xodimlarga eslatma."""
     if is_sunday():
         return
-    if is_paused:
-        logger.info("Bot paused — shift_reminder skipped")
-        return
 
     employees = db.get_employees_by_shift(shift)
     if not employees:
@@ -1574,51 +1559,6 @@ async def shift_reminder(context: ContextTypes.DEFAULT_TYPE, shift: str):
             )
         except Exception:
             pass  # Xodim botni bloklagan bo'lishi mumkin
-
-
-# ══════════════════════════════════════
-#  PAUSE / RESUME
-# ══════════════════════════════════════
-
-async def pause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Botni pauzaga qo'yish — avtomatik xabarlar o'chadi (faqat admin)."""
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Faqat adminlar uchun.")
-        return
-    global is_paused
-    if is_paused:
-        await update.message.reply_text("⏸️ Bot allaqachon pauzada.")
-        return
-    is_paused = True
-    logger.info(f"Bot pauzaga qo'yildi — admin {user_id}")
-    await update.message.reply_text(
-        "⏸️ *Bot pauzaga qo'yildi*\n\n"
-        "Avtomatik xabarlar (kelmaganlar hisoboti, smena eslatmalari) "
-        "yuborilmaydi.\n\n"
-        "Qayta ishga tushirish uchun /resume",
-        parse_mode="Markdown"
-    )
-
-
-async def resume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Botni qayta ishga tushirish — avtomatik xabarlar qaytadi (faqat admin)."""
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Faqat adminlar uchun.")
-        return
-    global is_paused
-    if not is_paused:
-        await update.message.reply_text("✅ Bot allaqachon ishlamoqda.")
-        return
-    is_paused = False
-    logger.info(f"Bot qayta ishga tushirildi — admin {user_id}")
-    await update.message.reply_text(
-        "▶️ *Bot qayta ishga tushirildi*\n\n"
-        "Avtomatik xabarlar (kelmaganlar hisoboti, smena eslatmalari) "
-        "navbatdagi belgilangan vaqtda yuboriladi.",
-        parse_mode="Markdown"
-    )
 
 
 # ══════════════════════════════════════
@@ -1794,8 +1734,6 @@ def main():
     app.add_handler(CommandHandler("remove", remove_employee_cmd))
     app.add_handler(CommandHandler("sheets", sheets_cmd))
     app.add_handler(CommandHandler("notify", notify_cmd))
-    app.add_handler(CommandHandler("pause", pause_cmd))
-    app.add_handler(CommandHandler("resume", resume_cmd))
 
     # --- Guruhdagi video handler ---
     app.add_handler(MessageHandler(
