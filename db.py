@@ -164,6 +164,21 @@ def _resolve_academic_branches(branch: str) -> list[str]:
         return ["academic", "academic_support"]
     return [branch]
 
+def deactivate_non_academic():
+    """Faqat academic support filialidagi xodimlarni qoldirib, qolganlarini active=0 qiladi."""
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE employees SET active = 0 WHERE branch NOT IN ('academic_support', 'academic')"
+        )
+        conn.commit()
+        print("[DB] Non-academic employees deactivated")
+    except Exception as e:
+        print(f"[DB] deactivate_non_academic error: {e}")
+    finally:
+        conn.close()
+
+
 def get_employees_by_branch(branch: str) -> list[dict]:
     branches = _resolve_academic_branches(branch)
     placeholders = ",".join("?" for _ in branches)

@@ -305,11 +305,15 @@ def load_employees_from_sheets():
                         branch = row.get("branch", "integro")
                         shift = row.get("shift", "morning")
                         active = int(row.get("active", 1))
-                        if active:
-                            cws = row.get("custom_work_start", "") or None
-                            cwe = row.get("custom_work_end", "") or None
-                            add_employee(tid, name, role, branch, shift, cws, cwe)
-                            employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift, "custom_work_start": cws, "custom_work_end": cwe})
+                        if not active:
+                            continue
+                        # FAQAT academic support xodimlarini yuklash
+                        if branch not in ("academic_support", "academic"):
+                            continue
+                        cws = row.get("custom_work_start", "") or None
+                        cwe = row.get("custom_work_end", "") or None
+                        add_employee(tid, name, role, branch, shift, cws, cwe)
+                        employees.append({"telegram_id": tid, "name": name, "role": role, "branch": branch, "shift": shift, "custom_work_start": cws, "custom_work_end": cwe})
                     except (ValueError, KeyError) as e:
                         print(f"[Sheets] {title} qator xatolik: {e}")
             except Exception as e:

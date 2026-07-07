@@ -1714,8 +1714,11 @@ def main():
             logger.info(f"📋 Sheets dan {len(restored)} ta attendance yozuvi tiklandi")
     else:
         logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
- 
-     # Application (post_init orqali auto-notify)
+
+    # Academic support bo'lmagan xodimlarni o'chirish (faqat academic qolsin)
+    db.deactivate_non_academic()
+
+    # Application (post_init orqali auto-notify)
     app = Application.builder().token(config.BOT_TOKEN).post_init(auto_notify_on_startup).build()
 
     # --- Admin komandalari (faqat private) ---
