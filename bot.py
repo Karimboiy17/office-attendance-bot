@@ -1,272 +1,241 @@
-"""Office Attendance Bot — Asosiy fayl"""
+#!/usr/bin/env python3
+"""Office Manager Bot — Attendance + Task Management"""
 
+import os
+import sys
 import logging
 import random
-from datetime import datetime, time as dt_time, timedelta
-import re
-import os
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime, timedelta
+from functools import wraps
 
-import pytz
-
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    filters, ContextTypes, ConversationHandler,
 )
 
 import config
 import db
-import sheets
+import keyboard as kb
 import report
-import keyboard
+import sheets
 
+# ── Logging ──
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-tz = pytz.timezone(config.TIMEZONE)
+from config import TIMEZONE
+import pytz
+tz = pytz.timezone(TIMEZONE)
 
-# Motivatsion gaplar — vaqtida kelgan xodimlarga random yuboriladi
+# ── Bosqichlar (ConversationHandler) ──
+(REG_BRANCH, REG_SHIFT, REG_NAME,
+ ADD_EMP_ID, ADD_EMP_NAME, ADD_EMP_ROLE, ADD_EMP_BRANCH, ADD_EMP_SHIFT,
+ REMOVE_EMP_ID) = range(9)
+
+LATE_REASON = range(10, 11)
+
+# ── Motivatsion iboralar ──
 MOTIVATIONAL_PHRASES = [
-    "Har bir muvaffaqiyatli kun ertalab boshlanadi! Ertangi kunningiz yanada ajoyib bo'lsin! 🌅",
-    "O'z vaqtida kelish — professionallik belgisi. Ajoyib! 🏆",
-    "Vaqt — eng qadrli resurs, uni qadrlaganingiz uchun tashakkur! ⏰",
-    "Aynan shunday intizom bilan katta maqsadlarga erishiladi. Barakalla! 👏",
-    "Ertalabki ilk qadam — kuningiz muvaffaqiyatli bo'lishining garovi! 💪",
-    "Kunni to'g'ri boshlash — yarim g'alaba. Bugungi kun sizniki! ⚡",
-    "Sizning vaqtida kelishingiz jamoaga ijobiy o'rnak ko'rsatadi! 🌟",
-    "Aniq vaqtda ish boshlash — katta yutuqlarning asosi! 🔥",
-    "Rahbaringiz sizdan mamnun! Intizomli xodim har doim qadrlanadi! 👍",
-    "Kunni ijobiy boshladingiz — kuningiz barakali o'tsin! ✨",
-    "Bir daqiqa ham kechikmay kelish — bu yuqori darajadagi mas'uliyat! 🎯",
-    "Siz haqiqiy professional! Vaqtni aniq boshqarish — kuchli fazilat! 💎",
-    "Bugungi go'zal ish kuniga ilk qadamni qo'ydingiz. Omad! 🚀",
-    "Intizom — muvaffaqiyat kaliti. Siz buni bilasiz va amal qilasiz! 🔑",
-    "Kunning birinchi va eng muhim qadamini tashladingiz. Qolgani oson! 🏃",
-    "O'z vaqtida ishga kelish — bu o'z ishingizni hurmat qilishdir! 🙌",
-    "Ertalabki choy qancha mazali bo'lsa, vaqtida kelish ham shunchalik yoqimli! ☕",
-    "Siz ustozsiz! Intizom sizning kuchli tomoningiz. Shu davom eting! 🦁",
-    "Har bir on-time kelish — o'z ustingizdagi g'alaba! Tabriklayman! 🎉",
-    "Yaxshi boshlangan ish — yarmi bitgan ish. Kun muvaffaqiyatli bo'lsin! 🌈",
+    "Ajoyib! Bugun ham ishga o'z vaqtida yetib keldiz! 💪",
+    "Barakalla! Ertangi kunning o'zidan boshlang'ich yaxshi! 🌟",
+    "Zo'r! Bugun kun maroqli o'tadi! 🔥",
+    "Rahmat, xodimlarimizning intizomi uchun! 👍",
+    "A'lo! Shu jadallik bilan davom eting! ⚡",
+    "Yaxshi ish! Bugungi kunda eng zo'ri siz! 🏆",
 ]
 
-# Ro'yxatdan o'tish vaqtida xodim ma'lumotlarini saqlash
-# {user_id: {"branch": "...", "name": "...", "shift": "..."}}
-pending_registration = {}
-
-# Admin tasdiqlash vaqtida xodim ma'lumotlarini saqlash
-# {admin_id: {"telegram_id": ..., "branch": "...", "shift": "...", "telegram_name": "..."}}
-pending_approvals = {}
-
-# Kechikish sababi kutilayotgan xodimlar: {user_id: {"attempts": 0, "date": "..."}}
-pending_late_reason = {}
-
-# Maksimum necha marta sabab so'raladi
-MAX_LATE_REASON_ATTEMPTS = 3
-
-
 # ══════════════════════════════════════
-#  HELPERS
+#  CHECKLAR
 # ══════════════════════════════════════
-
-def is_coordinator(user_id: int) -> bool:
-    return user_id in config.COORDINATOR_IDS
-
-
-def is_support_coordinator(user_id: int) -> bool:
-    return user_id == config.SUPPORT_COORDINATOR_ID
-
-
-def get_coordinator_branch(user_id: int) -> str | None:
-    """Koordinator qaysi filialga tegishli ekanini qaytaradi.
-    Agar bitta filialga biriktirilgan bo'lsa — o'sha filial.
-    Agar bir nechta yoki hech qaysiga — None.
-    Support coordinator uchun — "academic_support"."""
-    if is_support_coordinator(user_id):
-        return "academic_support"
-    branches = []
-    for branch, ids in config.COORDINATORS.items():
-        if user_id in ids:
-            branches.append(branch)
-    return branches[0] if len(branches) == 1 else None
-
-
-def is_coordinator_for_branch(user_id: int, branch: str) -> bool:
-    """Koordinator aynan shu filialga biriktirilganmi?"""
-    return user_id in config.COORDINATORS.get(branch, [])
-
 
 def is_admin(user_id: int) -> bool:
     return user_id in config.ADMIN_IDS
 
 
-def has_access(user_id: int) -> bool:
-    """Admin, coordinator yoki support coordinator — hisobot ko'ra oladi."""
-    return is_admin(user_id) or is_coordinator(user_id) or is_support_coordinator(user_id)
+def is_employee(user_id: int) -> bool:
+    emp = db.get_employee(user_id)
+    return emp is not None
 
 
 def is_work_day() -> bool:
-    """Bugun ish kunimi? (Dushanba-Shanba)"""
-    return datetime.now(tz).weekday() in config.WORK_DAYS
-
-
-def is_sunday() -> bool:
-    """Bugun yakshanbami?"""
-    return datetime.now(tz).weekday() == 6
-
-
-# ══════════════════════════════════════
-#  KECHIKISH SABABI REMINDER
-# ══════════════════════════════════════
-
-async def late_reason_reminder(context: ContextTypes.DEFAULT_TYPE):
-    """Kechikkan xodimga sabab yozishni eslatish (3 martagacha)."""
-    job = context.job
-    user_id = job.data["user_id"]
-    attempt = job.data["attempt"]
-
-    if user_id not in pending_late_reason:
-        return  # Allaqachon javob bergan
-
-    pending_late_reason[user_id]["attempts"] += 1
-    remaining = MAX_LATE_REASON_ATTEMPTS - attempt
-
-    if remaining > 0:
-        await context.bot.send_message(
-            user_id,
-            f"⏰ *Kechikish sababini yozmadingiz!* ({attempt}/{MAX_LATE_REASON_ATTEMPTS})\n\n"
-            f"Iltimos, nima sababdan kechikkaningizni yozib yuboring:",
-            parse_mode="Markdown",
-        )
-        # Keyingi eslatma 10 daqiqadan so'ng
-        context.job_queue.run_once(
-            late_reason_reminder,
-            when=600,
-            data={"user_id": user_id, "attempt": attempt + 1},
-            name=f"late_reason_{user_id}",
-        )
-    else:
-        # 3 marta bo'ldi, to'xtatamiz
-        pending_late_reason.pop(user_id, None)
-        await context.bot.send_message(
-            user_id,
-            "⚠️ Kechikish sababini yozmadingiz. Keyingi safar o'z vaqtida kelishga harakat qiling!",
-        )
+    """Bugun ish kuni ekanligini tekshirish"""
+    custom = db.get_custom_shift_times()
+    return datetime.now(tz).weekday() in custom["work_days"]
+def has_access(user_id: int) -> bool:
+    return is_admin(user_id)
 
 
 # ══════════════════════════════════════
-#  VIDEO CHECK-IN (Guruhda)
+#  START / HELP
 # ══════════════════════════════════════
 
-async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Guruhdagi YOKI botga private video xabarlarni qayta ishlash."""
-    chat_id = update.effective_chat.id
-    is_group = (chat_id == config.GROUP_ID)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Avvalgi add flow ni tozalash
+    if "add_state" in context.user_data:
+        context.user_data.pop("add_state", None)
+        context.user_data.pop("add_emp_id", None)
+        context.user_data.pop("add_emp_name", None)
+        context.user_data.pop("add_emp_branch", None)
 
+    user_id = update.effective_user.id
     user = update.effective_user
-    user_id = user.id
-    video = update.message.video or update.message.video_note
 
-    if not video:
+    # Admin
+    if is_admin(user_id):
+        await update.message.reply_text(
+            f"🏢 *Office Manager Bot* — Admin panel\n\n"
+            "Quyidagi tugmalar orqali boshqaring:",
+            parse_mode="Markdown",
+            reply_markup=kb.admin_keyboard(),
+        )
         return
 
-    # Xodim ro'yxatda bormi?
+    # Ro'yxatdan o'tgan xodim
+    emp = db.get_employee(user_id)
+    if emp:
+        branch = config.BRANCHES.get(emp.get("branch", ""), emp.get("branch", ""))
+        role = config.ROLE_LABELS.get(emp.get("role", ""), emp.get("role", ""))
+        branch_name = emp.get("branch", "default")
+        shift_label = db.get_custom_shift_times().get(branch_name, {}).get(emp.get("shift", ""), {}).get("label", "")
+        await update.message.reply_text(
+            f"👤 *{emp['name']}*\n"
+            f"📍 {branch} | {role}\n"
+            f"🕐 {shift_label}\n\n"
+            "Check-in uchun *video* yuboring yoki quyidagi tugmalardan foydalaning:",
+            parse_mode="Markdown",
+            reply_markup=kb.employee_keyboard(),
+        )
+        return
+
+    # Ro'yxatdan o'tmagan
+    name = user.first_name or "Foydalanuvchi"
+    context.user_data["reg_state"] = "branch"
+    await update.message.reply_text(
+        f"👋 *Xush kelibsiz, {name}!*\n\n"
+        "Office Manager botiga xush kelibsiz.\n"
+        "Ro'yxatdan o'tish uchun bo'limingizni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=kb.registration_branches_keyboard(),
+    )
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await start(update, context)
+
+
+# ══════════════════════════════════════
+#  VIDEO CHECK-IN / CHECK-OUT
+# ══════════════════════════════════════
+
+pending_late_reason = {}  # {user_id: {"attempts": 0, "date": "..."}}
+
+
+async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Video qabul qilish — check-in yoki check-out"""
+    user_id = update.effective_user.id
+    user = update.effective_user
+    is_group = update.effective_chat.type in ("group", "supergroup")
+
+    # Faqat ro'yxatdan o'tgan xodimlar
     emp = db.get_employee(user_id)
     if not emp:
-        if not is_group:
-            await update.message.reply_text("❌ Siz ro'yxatda yo'qsiz.")
+        await update.message.reply_text(
+            "❌ Siz ro'yxatdan o'tmagansiz. Iltimos, avval /start buyrug'i bilan ro'yxatdan o'ting."
+        )
         return
 
-    video_id = str(video.file_id)
+    # Faqat shaxsiy xabarlarda qabul qilish
+    if update.effective_chat.type != "private":
+        context.user_data["awaiting_violation_reason"] = True
+        await update.message.reply_text(
+            "❌‼️ Nega boshqa chatdan video yuborishga harakat qilayapsiz?! Darhol sababini yozing!"
+        )
+        return
 
-    # Check-in yoki check-out?
+    if not is_work_day():
+        await update.message.reply_text(
+            "⚠️ Bugun dam olish kuni! Ish kunlarida video yuboring."
+        )
+        return
+
+    # Video ID ni olish
+    if update.message.video_note:
+        video_id = update.message.video_note.file_id
+    elif update.message.video:
+        video_id = update.message.video.file_id
+    else:
+        await update.message.reply_text("❌ Iltimos, video yoki video_note yuboring.")
+        return
+
+    # ── CHECK-IN yoki CHECK-OUT ──
     if not db.is_checked_in(user_id):
         # CHECK-IN
+        custom = db.get_custom_shift_times()
+        branch_key = "online" if emp.get("branch") == "online" else "default"
+        shifts = custom[branch_key]
+        deadline = custom["checkin_deadline_minutes"]
 
-        # ── Vaqt cheklovlarini tekshirish ──
-        # Avval custom_work_start ni tekshiramiz, agar bo'lmasa shift default ishlatiladi
-        custom_start = emp.get("custom_work_start")
-        if custom_start:
-            parts = custom_start.split(":")
-            start_hour, start_min = int(parts[0]), int(parts[1])
-            shift_label = f"{custom_start} dan custom"
-        else:
-            shift_cfg = config.SHIFTS.get(emp["shift"])
-            if not shift_cfg:
-                shift_cfg = None
-                shift_label = ""
-            else:
-                start_hour = shift_cfg["start"]
-                start_min = 0
-                shift_label = shift_cfg["label"]
+        shift = emp.get("shift", "morning")
+        shift_cfg = shifts.get(shift)
+        if shift_cfg:
+            start_hour = shift_cfg["start"]
 
-        if shift_label:
-            now = datetime.now(tz)
-            shift_start = now.replace(hour=start_hour, minute=start_min, second=0, microsecond=0)
+        now = datetime.now(tz)
+        if shift_cfg:
+            shift_start = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
             allowed_from = shift_start - timedelta(minutes=20)
-            too_late = shift_start + timedelta(minutes=60)
+            too_late = shift_start + timedelta(minutes=120)  # 2 soatgacha ruxsat
 
             if now < allowed_from:
                 await update.message.reply_text(
-                    f"⏰ {user.first_name}, sizning smenangiz {shift_label}.\n"
-                    f"Smena boshlanishiga hali vaqt bor. "
-                    f"Faqat ish vaqtida video yuboring. Qabul qilinmadi."
+                    f"⏰ {user.first_name}, sizning smenangiz {shift_cfg['label']}.\n"
+                    "Smena boshlanishiga hali vaqt bor. Keyinroq video yuboring."
                 )
                 return
 
             if now > too_late:
                 await update.message.reply_text(
-                    f"❌ {user.first_name}, siz juda kech qoldingiz ({now.strftime('%H:%M')}). "
-                    f"Qabul qilinmadi."
+                    f"❌ {user.first_name}, siz juda kech qoldingiz ({now.strftime('%H:%M')}).\n"
+                    "Qabul qilinmadi."
                 )
                 return
 
         result = db.check_in(user_id, video_id)
-
         if not result:
             await update.message.reply_text("❌ Check-in xatolik yuz berdi.")
             return
 
-        branch = config.BRANCHES.get(emp["branch"], emp["branch"])
-        role = config.ROLE_LABELS.get(emp["role"], emp["role"])
+        branch = config.BRANCHES.get(emp.get("branch", ""), emp.get("branch", ""))
+        role = config.ROLE_LABELS.get(emp.get("role", ""), emp.get("role", ""))
         time_str = result["time"][:5]
 
         if result["status"] == "on_time":
             phrase = random.choice(MOTIVATIONAL_PHRASES)
             msg = (
-                f"✅ {user.first_name} — Check-in: {time_str}\n"
-                f"📍 {branch} | 👤 {role} | O'z vaqtida\n\n"
+                f"✅ *{user.first_name}* — Check-in: {time_str}\n"
+                f"📍 {branch} | O'z vaqtida\n\n"
                 f"💬 {phrase}"
             )
         else:
             msg = (
-                f"⚠️ {user.first_name} — Check-in: {time_str}\n"
-                f"📍 {branch} | 👤 {role} | ⏰ {result['late_minutes']} daqiqa kechikdi"
+                f"⚠️ *{user.first_name}* — Check-in: {time_str}\n"
+                f"📍 {branch} | ⏰ {result['late_minutes']} daqiqa kechikdi"
             )
 
-        if not is_work_day():
-            msg += "\n⚠️ Bugun dam olish kuni!"
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
-        await update.message.reply_text(msg)
-
-        # ── Kechikkan xodimdan sabab so'rash ──
+        # Kechikkan — sabab so'rash
         if result["status"] == "late":
-            today_str = datetime.now(tz).strftime("%Y-%m-%d")
-            pending_late_reason[user_id] = {"attempts": 0, "date": today_str}
+            pending_late_reason[user_id] = {"attempts": 0, "date": result["date"]}
             await update.message.reply_text(
                 f"⚠️ Siz {result['late_minutes']} daqiqa kechikdingiz.\n"
                 "Iltimos, *kechikish sababini* yozib yuboring:",
                 parse_mode="Markdown",
             )
-            # 5 daqiqadan so'ng birinchi eslatma
             context.job_queue.run_once(
                 late_reason_reminder,
                 when=300,
@@ -274,60 +243,19 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 name=f"late_reason_{user_id}",
             )
 
-        # Guruhga ham e'lon qilish
+        # Guruhga e'lon
         if not is_group and config.GROUP_ID:
             try:
-                await context.bot.send_message(config.GROUP_ID, msg)
+                await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
             except Exception:
                 pass
 
-        # Academic Support → support coordinator ga xabar
-        if emp["branch"] in ("academic_support", "academic"):
-            status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
-            try:
-                await context.bot.send_message(
-                    config.SUPPORT_COORDINATOR_ID,
-                    "📚 *Academic Support* — Check-in\n\n"
-                    f"👤 {emp['name']}\n"
-                    f"🕐 {result['time'][:5]}\n"
-                    f"📊 {status_text}",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
+        # Tasklarni ko'rsatish (check-in dan keyin)
+        tasks = db.get_today_tasks(user_id)
+        if tasks:
+            await show_tasks_to_user(update, context, user_id)
 
-        # Koordinatorlarga xabar va video yuborish
-        emp_branch = emp["branch"]
-        branch_coordinators = config.COORDINATORS.get(emp_branch, [])
-        # Academic branch xodimlari ham academic_support coordinatorlariga xabar olsin
-        if not branch_coordinators and emp_branch == "academic":
-            branch_coordinators = config.COORDINATORS.get("academic_support", [])
-        if branch_coordinators:
-            status_text = "O'z vaqtida" if result["status"] == "on_time" else f"{result['late_minutes']} daqiqa kechikdi"
-            branch_label = config.BRANCHES.get(emp["branch"], emp["branch"])
-            role_label = config.ROLE_LABELS.get(emp["role"], emp["role"])
-            coordinator_msg = (
-                f"🏢 *{branch_label}* ({role_label}) — Check-in\n\n"
-                f"👤 {emp['name']}\n"
-                f"🕐 {result['time'][:5]}\n"
-                f"📊 {status_text}"
-            )
-            for coord_id in branch_coordinators:
-                try:
-                    await context.bot.send_message(
-                        coord_id,
-                        coordinator_msg,
-                        parse_mode="Markdown",
-                    )
-                    # Video/Video_note ni forward qilish
-                    if update.message.video_note:
-                        await context.bot.send_video_note(coord_id, video_id)
-                    elif update.message.video:
-                        await context.bot.send_video(coord_id, video_id)
-                except Exception as e:
-                    logger.error(f"Koordinatorga xabar yuborishda xatolik ({coord_id}): {e}")
-
-        # Sheets ga yozish
+        # Sheets
         sheets.sync_attendance_to_sheets({
             "employee_id": user_id,
             "date": result["date"],
@@ -343,44 +271,43 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     elif not db.is_checked_out(user_id):
         # CHECK-OUT
-        result = db.check_out(user_id, str(video.file_id))
-
+        result = db.check_out(user_id, video_id)
         if not result:
             await update.message.reply_text("❌ Check-out xatolik yuz berdi.")
             return
 
         time_str = result["check_out_time"][:5]
+        msg = f"👋 *{user.first_name}* — Check-out: {time_str}"
 
-        msg = f"👋 {user.first_name} — Check-out: {time_str}"
+        # Task yakuniy natijasi
+        tasks = db.get_today_tasks(user_id)
+        total = len(tasks)
+        completed = sum(1 for t in tasks if t["status"] == "completed")
+        if total > 0:
+            percent = round(completed / total * 100)
+            msg += f"\n\n📋 *Bugungi tasklar:* {completed}/{total} ({percent}%)"
+            if percent == 100:
+                msg += "\n🎉 Barcha vazifalarni bajardingiz! Zo'r!"
+            elif percent >= 70:
+                msg += "\n👍 Yaxshi natija!"
+            else:
+                msg += "\n💪 Ertaga ko'proq bajarishga harakat qiling!"
 
-        await update.message.reply_text(msg)
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
-        # Guruhga ham e'lon qilish
+        # Guruhga e'lon
         if not is_group and config.GROUP_ID:
             try:
-                await context.bot.send_message(config.GROUP_ID, msg)
+                await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
             except Exception:
                 pass
 
-        # Academic Support → support coordinator ga xabar (check-out)
-        if emp["branch"] in ("academic_support", "academic"):
-            try:
-                await context.bot.send_message(
-                    config.SUPPORT_COORDINATOR_ID,
-                    "📚 *Academic Support* — Check-out\n\n"
-                    f"👤 {emp['name']}\n"
-                    f"🕐 {time_str}",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
-
-        # Sheets ga yozish (check_out)
+        # Sheets
         sheets.sync_attendance_to_sheets({
             "employee_id": user_id,
             "date": result["date"],
             "check_out_time": result["check_out_time"],
-            "check_out_video_id": str(video.file_id),
+            "check_out_video_id": video_id,
             "name": emp["name"],
             "role": emp["role"],
             "branch": emp["branch"],
@@ -389,1439 +316,1580 @@ async def handle_group_video(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     else:
         await update.message.reply_text(
-            f"ℹ️ {user.first_name}, siz bugun allaqachon check-in va check-out qilgansiz."
+            f"ℹ️ *{user.first_name}*, siz bugun allaqachon check-in va check-out qilgansiz.",
+            parse_mode="Markdown",
         )
 
 
+async def show_tasks_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Foydalanuvchiga tasklarni inline buttonlar bilan ko'rsatish"""
+    text, tasks = report.format_tasks_compact(user_id)
+    if not tasks:
+        return
+
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+
+    # Birinchi 5 task uchun tugmalar
+    rows = []
+    for i, t in enumerate(tasks):
+        if i >= 5:
+            break
+        status_icon = "✅" if t["status"] == "completed" else "⬜"
+        time_slot = t.get("time_slot", "")
+        short = time_slot
+        cb_data = f"task_toggle_{t['task_id']}"
+        rows.append([InlineKeyboardButton(f"{status_icon} {short}", callback_data=cb_data)])
+
+    # Pagination va refresh
+    nav_row = []
+    if total > 5:
+        nav_row.append(InlineKeyboardButton(f"📋 Hammasi ({total})", callback_data="task_list_full"))
+    nav_row.append(InlineKeyboardButton("🔄", callback_data="task_refresh"))
+    if nav_row:
+        rows.append(nav_row)
+
+    markup = InlineKeyboardMarkup(rows)
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+
+
 # ══════════════════════════════════════
-#  ADMIN KOMANDALARI (Private chat)
+#  KEChIKISH SABABI
 # ══════════════════════════════════════
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start komandasi."""
+async def late_reason_reminder(context: ContextTypes.DEFAULT_TYPE):
+    data = context.job.data
+    user_id = data["user_id"]
+    attempt = data["attempt"]
+
+    if user_id in pending_late_reason:
+        pending_late_reason[user_id]["attempts"] = attempt
+        await context.bot.send_message(
+            user_id,
+            f"⏰ Eslatma ({attempt}/3): Kechikish sababini yozib yuboring. "
+            "Aks holda kechikish qayd etiladi."
+        )
+        if attempt < 3:
+            context.job_queue.run_once(
+                late_reason_reminder,
+                when=300,
+                data={"user_id": user_id, "attempt": attempt + 1},
+                name=f"late_reason_{user_id}",
+            )
+
+
+async def handle_late_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kechikish sababini qabul qilish"""
     user_id = update.effective_user.id
+    if user_id not in pending_late_reason:
+        return  # Kechikish sababi so'ralmagan
 
-    # Coordinator yoki admin
-    if has_access(user_id):
-        if is_admin(user_id):
-            await update.message.reply_text(
-                f"🏢 *Office Attendance Bot* — Admin\n\n"
-                "Tugmalar yoki komandalar orqali boshqaring:",
-                parse_mode="Markdown",
-                reply_markup=keyboard.admin_keyboard(),
-            )
-        elif is_support_coordinator(user_id):
-            await update.message.reply_text(
-                f"🏢 *Office Attendance Bot* — Academic Support Koordinator\n"
-                f"📍 *Academic Support*\n\n"
-                "Academic Support xodimlari hisobotini ko'rasiz:",
-                parse_mode="Markdown",
-                reply_markup=keyboard.coordinator_keyboard("academic_support"),
-            )
-        else:
-            branch = get_coordinator_branch(user_id)
-            if is_coordinator(user_id) and not branch:
-                # Bosh koordinator — hamma filialni ko'radi
-                await update.message.reply_text(
-                    f"🏢 *Office Attendance Bot* — Bosh Koordinator\n"
-                    f"📍 *Barcha filiallar*\n\n"
-                    "Barcha filiallar hisobotini ko'rasiz:",
-                    parse_mode="Markdown",
-                    reply_markup=keyboard.admin_keyboard(),
-                )
-            else:
-                branch_label = config.BRANCHES.get(branch, branch) if branch else "Noma'lum filial"
-                await update.message.reply_text(
-                    f"🏢 *Office Attendance Bot* — Koordinator\n"
-                    f"📍 *{branch_label}*\n\n"
-                    "Faqat o'z filialingiz hisobotini ko'rasiz:",
-                    parse_mode="Markdown",
-                    reply_markup=keyboard.coordinator_keyboard(branch),
-                )
-        return
-
-    # Oddiy xodim
-    emp = db.get_employee(user_id)
-    if emp:
-        branch = config.BRANCHES.get(emp["branch"], emp["branch"])
-        role = config.ROLE_LABELS.get(emp["role"], emp["role"])
-        shift = config.SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
-        await update.message.reply_text(
-            f"👤 {emp['name']}\n"
-            f"📍 {branch} | {role}\n"
-            f"🕐 {shift}\n\n"
-            "Check-in uchun botga video yuboring.",
-            reply_markup=keyboard.employee_keyboard(),
+    reason = update.message.text.strip()
+    today_str = datetime.now(tz).strftime("%Y-%m-%d")
+    conn = db.get_conn()
+    try:
+        conn.execute(
+            "UPDATE attendance SET late_reason = ? WHERE employee_id = ? AND date = ?",
+            (reason, user_id, today_str)
         )
-        return
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Late reason save error: {e}")
+    finally:
+        conn.close()
 
-    # Ro'yxatdan o'tmagan → tugmalar bilan
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+    # Jobs to'xtatish
+    for job in context.job_queue.jobs():
+        if job.name == f"late_reason_{user_id}":
+            job.schedule_removal()
 
-    name = update.effective_user.first_name
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🏢 Integro (Office Manager)", callback_data="regbranch_integro")],
-        [InlineKeyboardButton("🏢 Amir Temur (Office Manager)", callback_data="regbranch_amir_temur")],
-        [InlineKeyboardButton("🏢 Xalqlar (Office Manager)", callback_data="regbranch_xalqlar")],
-        [InlineKeyboardButton("💻 Online", callback_data="regbranch_online")],
-        [InlineKeyboardButton("📚 Academic Support", callback_data="regbranch_academic_support")],
-    ])
-
+    del pending_late_reason[user_id]
     await update.message.reply_text(
-        f"👋 *Xush kelibsiz, {name}!*\n\n"
-        "Ro'yxatdan o'tish uchun bo'limingizni tanlang:",
-        parse_mode="Markdown",
-        reply_markup=kb,
+        "✅ Kechikish sababi qabul qilindi. Rahmat! 👍"
     )
 
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not has_access(update.effective_user.id):
+# ══════════════════════════════════════
+#  XODIM TUGMALARI (Reply buttons)
+# ══════════════════════════════════════
+
+async def handle_employee_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    emp = db.get_employee(user_id)
+    if not emp:
+        await update.message.reply_text("❌ Siz ro'yxatdan o'tmagansiz.")
         return
-    await start(update, context)
+
+    if text == "📋 Bugungi vazifalarim":
+        await show_tasks_full(update, context, user_id)
+
+    elif text == "👤 Mening ma'lumotim":
+        await update.message.reply_text(
+            report.format_employee_info(emp),
+            parse_mode="Markdown",
+        )
+
+    elif text == "📊 Bugungi holatim":
+        await show_employee_status(update, context, user_id)
+
+    else:
+        await update.message.reply_text("❌ Noto'g'ri buyruq.")
+
+
+async def show_tasks_full(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Barcha tasklarni inline buttonlar bilan ko'rsatish"""
+    tasks = db.get_today_tasks(user_id)
+    if not tasks:
+        await update.message.reply_text("📋 Bugungi vazifalar o'rnatilmagan.")
+        return
+
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+
+    lines = [f"📋 *Bugungi vazifalar:* {completed}/{total}", ""]
+    rows = []
+    for i, t in enumerate(tasks, 1):
+        status_icon = "✅" if t["status"] == "completed" else "⬜"
+        time_slot = t.get("time_slot", "")
+        task_text = t.get("task_text", "")
+        lines.append(f"{status_icon} *{time_slot}*")
+        lines.append(f"   {task_text}")
+        cb_data = f"task_toggle_{t['task_id']}"
+        rows.append([InlineKeyboardButton(f"{status_icon} {time_slot}", callback_data=cb_data)])
+
+    lines.append("")
+    percent = round(completed / max(total, 1) * 100)
+    lines.append(f"*Progress:* {percent}%")
+
+    rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="task_refresh")])
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+async def show_employee_status(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Xodimning bugungi holati"""
+    emp = db.get_employee(user_id)
+    if not emp:
+        return
+
+    lines = [f"👤 *{emp['name']}* — Bugungi holat", ""]
+
+    # Attendance
+    checked_in = db.is_checked_in(user_id)
+    checked_out = db.is_checked_out(user_id)
+    if checked_in and checked_out:
+        lines.append("✅ Check-in va Check-out qilingan")
+    elif checked_in:
+        lines.append("🟢 Check-in qilingan (hali check-out qilinmagan)")
+    else:
+        lines.append("❌ Hali check-in qilinmagan")
+
+    # Tasks
+    tasks = db.get_today_tasks(user_id)
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+    if total > 0:
+        percent = round(completed / total * 100)
+        bar = "🟩" * (percent // 20) + "⬜" * (5 - percent // 20)
+        lines.append(f"📋 Tasklar: {completed}/{total} {bar} ({percent}%)")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+# ══════════════════════════════════════
+#  INLINE TUGMALAR
+# ══════════════════════════════════════
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        user_id = update.effective_user.id
+        logger.info(f"📩 Callback received: data='{data}', user_id={user_id}")
+
+        # ── Task toggle ──
+        if data.startswith("task_toggle_"):
+            task_id = int(data.replace("task_toggle_", ""))
+            tasks = db.get_today_tasks(user_id)
+            for t in tasks:
+                if t["task_id"] == task_id:
+                    if t["status"] == "completed":
+                        db.uncomplete_task(user_id, task_id)
+                    else:
+                        db.complete_task(user_id, task_id)
+                    break
+            await refresh_task_message(query, user_id)
+            return
+
+        # ── Task refresh ──
+        if data == "task_refresh":
+            await refresh_task_message(query, user_id)
+            return
+
+        # ── Task bajarishni boshladim ──
+        if data.startswith("task_started_"):
+            task_id = int(data.replace("task_started_", ""))
+            await query.edit_message_text(
+                "✅ *Yaxshi, omad tilaymiz!*\\n\\n"
+                "Taskni bajarib bo'lganingizdan so'ng "
+                "✅ belgilashni unutmang.",
+                parse_mode="Markdown",
+            )
+            return
+
+        # ── Task bajara olmayman ──
+        if data.startswith("task_cant_do_"):
+            task_id = int(data.replace("task_cant_do_", ""))
+            pending_task_reason[user_id] = task_id
+            await query.edit_message_text(
+                "❌ Sababini yozib yuboring:",
+                parse_mode="Markdown",
+            )
+            return
+
+        # ── Task full list ──
+        if data == "task_list_full":
+            tasks = db.get_today_tasks(user_id)
+            if not tasks:
+                await query.edit_message_text("📋 Vazifalar yo'q.")
+                return
+
+            total = len(tasks)
+            completed = sum(1 for t in tasks if t["status"] == "completed")
+            lines = [f"📋 *Bugungi vazifalar:* {completed}/{total}", ""]
+            rows = []
+            for i, t in enumerate(tasks, 1):
+                status_icon = "✅" if t["status"] == "completed" else "⬜"
+                time_slot = t.get("time_slot", "")
+                task_text = t.get("task_text", "")
+                lines.append(f"{status_icon} *{time_slot}*")
+                lines.append(f"   {task_text}")
+                cb_data = f"task_toggle_{t['task_id']}"
+                rows.append([InlineKeyboardButton(f"{status_icon} {time_slot}", callback_data=cb_data)])
+
+            lines.append("")
+            percent = round(completed / max(total, 1) * 100)
+            lines.append(f"*Progress:* {percent}%")
+
+            rows.append([InlineKeyboardButton("🔄 Yangilash", callback_data="task_refresh")])
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+            return
+
+        # ── Admin: Tasklarni sozlash ──
+        if data.startswith("set_tasks_"):
+            name_key = data.replace("set_tasks_", "")
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+
+            # Default tasklarni o'rnatish (smena bo'yicha)
+            if name_key not in config.DEFAULT_TASKS:
+                await query.edit_message_text(f"❌ '{name_key}' noto'g'ri smena.")
+                return
+            default_tasks = config.DEFAULT_TASKS[name_key]
+
+            shift_label = {"morning": "☀️ Ertalab", "evening": "🌙 Kechki"}.get(name_key, name_key)
+            all_emps = db.get_all_employees()
+            target_emps = [e for e in all_emps if e.get("shift") == name_key]
+
+            if not target_emps:
+                await query.edit_message_text(
+                    f"❌ {shift_label} smenasida xodimlar yo'q."
+                )
+                return
+
+            count = 0
+            for emp in target_emps:
+                if db.set_employee_tasks(emp["telegram_id"], default_tasks):
+                    count += 1
+
+            if count:
+                await query.edit_message_text(
+                    f"✅ {shift_label} smenasidagi {count} ta xodimga tasklar o'rnatildi!"
+                )
+            else:
+                await query.edit_message_text("❌ Xatolik yuz berdi.")
+            return
+
+        # ── Admin back ──
+        if data == "admin_back":
+            await query.edit_message_text(
+                "🏢 *Admin panel*",
+                parse_mode="Markdown",
+            )
+            return
+
+        # ── Work Time Settings ──
+        if data == "wts_menu":
+            await show_wts_menu(query)
+            return
+
+        if data == "wts_morning":
+            settings = db.get_custom_shift_times()
+            s = settings["default"]["morning"]
+            await query.edit_message_text(
+                f"🌅 *Ertalab smenasi (Integro/AT/XD/Central)*\n\n"
+                f"Boshlanishi: `{s['start']:02d}:00`\n"
+                f"Tugashi: `{s['end']:02d}:00`\n\n"
+                "Vaqtni o'zgartirish uchun tugmalardan foydalaning:",
+                parse_mode="Markdown",
+                reply_markup=kb.shift_edit_keyboard("morning"),
+            )
+            return
+
+        if data == "wts_evening":
+            settings = db.get_custom_shift_times()
+            s = settings["default"]["evening"]
+            await query.edit_message_text(
+                f"🌆 *Kechki smena (Integro/AT/XD/Central)*\n\n"
+                f"Boshlanishi: `{s['start']:02d}:00`\n"
+                f"Tugashi: `{s['end']:02d}:00`\n\n"
+                "Vaqtni o'zgartirish uchun tugmalardan foydalaning:",
+                parse_mode="Markdown",
+                reply_markup=kb.shift_edit_keyboard("evening"),
+            )
+            return
+
+        if data == "wts_online_morning":
+            settings = db.get_custom_shift_times()
+            s = settings["online"]["morning"]
+            await query.edit_message_text(
+                f"🌅 *Online - Ertalab smenasi*\n\n"
+                f"Boshlanishi: `{s['start']:02d}:00`\n"
+                f"Tugashi: `{s['end']:02d}:00`\n\n"
+                "Vaqtni o'zgartirish uchun tugmalardan foydalaning:",
+                parse_mode="Markdown",
+                reply_markup=kb.shift_edit_keyboard("online_morning"),
+            )
+            return
+
+        if data == "wts_online_evening":
+            settings = db.get_custom_shift_times()
+            s = settings["online"]["evening"]
+            await query.edit_message_text(
+                f"🌆 *Online - Kechki smenasi*\n\n"
+                f"Boshlanishi: `{s['start']:02d}:00`\n"
+                f"Tugashi: `{s['end']:02d}:00`\n\n"
+                "Vaqtni o'zgartirish uchun tugmalardan foydalaning:",
+                parse_mode="Markdown",
+                reply_markup=kb.shift_edit_keyboard("online_evening"),
+            )
+            return
+
+        if data == "wts_deadline":
+            settings = db.get_custom_shift_times()
+            d = settings["checkin_deadline_minutes"]
+            await query.edit_message_text(
+                f"⏱ *Check-in muddati*\n\n"
+                f"Hozirgi: smena boshlangandan keyin `{d}` daqiqa\n\n"
+                "Yangi qiymatni *daqiqa* sonida yozib yuboring (masalan: `10`):",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="wts_menu")]
+                ]),
+            )
+            context.user_data["awaiting_deadline"] = True
+            return
+
+        if data == "wts_workdays":
+            settings = db.get_custom_shift_times()
+            days = settings["work_days"]
+            day_names = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba",
+                         "Juma", "Shanba", "Yakshanba"]
+            lines = ["📅 *Ish kunlari*\n"]
+            for d in range(7):
+                status = "✅" if d in days else "❌"
+                lines.append(f"{status} {day_names[d]}")
+            lines.append("")
+            lines.append("O'zgartirish uchun kun raqamini yozing (0-6, masalan: `0,1,2,3,4,5,6`):")
+            await query.edit_message_text(
+                "\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Orqaga", callback_data="wts_menu")]
+                ]),
+            )
+            context.user_data["awaiting_workdays"] = True
+            return
+
+        # Shift soatlarni tahrirlash
+        if data.startswith("wts_morning_start_dec"):
+            adj_shift_hour("morning", "start", -1, query)
+            return
+        if data.startswith("wts_morning_start_inc"):
+            adj_shift_hour("morning", "start", 1, query)
+            return
+        if data.startswith("wts_morning_end_dec"):
+            adj_shift_hour("morning", "end", -1, query)
+            return
+        if data.startswith("wts_morning_end_inc"):
+            adj_shift_hour("morning", "end", 1, query)
+            return
+        if data.startswith("wts_morning_start_show"):
+            show_shift_current(query, "morning", "start")
+            return
+        if data.startswith("wts_morning_end_show"):
+            show_shift_current(query, "morning", "end")
+            return
+        if data == "wts_morning_save":
+            await save_shift(query, "morning")
+            return
+
+        if data.startswith("wts_evening_start_dec"):
+            adj_shift_hour("evening", "start", -1, query)
+            return
+        if data.startswith("wts_evening_start_inc"):
+            adj_shift_hour("evening", "start", 1, query)
+            return
+        if data.startswith("wts_evening_end_dec"):
+            adj_shift_hour("evening", "end", -1, query)
+            return
+        if data.startswith("wts_evening_end_inc"):
+            adj_shift_hour("evening", "end", 1, query)
+            return
+        if data.startswith("wts_evening_start_show"):
+            show_shift_current(query, "evening", "start")
+            return
+        if data.startswith("wts_evening_end_show"):
+            show_shift_current(query, "evening", "end")
+            return
+        if data == "wts_evening_save":
+            await save_shift(query, "evening")
+            return
+
+        # ── Online branch handlers ──
+        if data.startswith("wts_online_morning_start_dec"):
+            adj_shift_hour("online_morning", "start", -1, query)
+            return
+        if data.startswith("wts_online_morning_start_inc"):
+            adj_shift_hour("online_morning", "start", 1, query)
+            return
+        if data.startswith("wts_online_morning_end_dec"):
+            adj_shift_hour("online_morning", "end", -1, query)
+            return
+        if data.startswith("wts_online_morning_end_inc"):
+            adj_shift_hour("online_morning", "end", 1, query)
+            return
+        if data.startswith("wts_online_morning_start_show"):
+            show_shift_current(query, "online_morning", "start")
+            return
+        if data.startswith("wts_online_morning_end_show"):
+            show_shift_current(query, "online_morning", "end")
+            return
+        if data == "wts_online_morning_save":
+            await save_shift(query, "online_morning")
+            return
+
+        if data.startswith("wts_online_evening_start_dec"):
+            adj_shift_hour("online_evening", "start", -1, query)
+            return
+        if data.startswith("wts_online_evening_start_inc"):
+            adj_shift_hour("online_evening", "start", 1, query)
+            return
+        if data.startswith("wts_online_evening_end_dec"):
+            adj_shift_hour("online_evening", "end", -1, query)
+            return
+        if data.startswith("wts_online_evening_end_inc"):
+            adj_shift_hour("online_evening", "end", 1, query)
+            return
+        if data.startswith("wts_online_evening_start_show"):
+            show_shift_current(query, "online_evening", "start")
+            return
+        if data.startswith("wts_online_evening_end_show"):
+            show_shift_current(query, "online_evening", "end")
+            return
+        if data == "wts_online_evening_save":
+            await save_shift(query, "online_evening")
+            return
+
+        # ── Coordinator: Xodim tasklarini tahrirlash ──
+        if data == "edit_employee_tasks":
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+            employees = db.get_all_employees()
+            if not employees:
+                await query.edit_message_text("👥 Xodimlar yo'q.")
+                return
+            text = "✏️ *Xodim tasklarini tahrirlash*\\n\\nQaysi xodimning tasklarini o'zgartirmoqchisiz?"
+            await query.edit_message_text(
+                text,
+                parse_mode="Markdown",
+                reply_markup=kb.edit_task_employee_list_keyboard(employees),
+            )
+            return
+
+        if data.startswith("edittasks_emp_"):
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+            emp_id = int(data.replace("edittasks_emp_", ""))
+            emp = db.get_employee_by_id(emp_id)
+            if not emp:
+                await query.edit_message_text("❌ Xodim topilmadi.")
+                return
+            tasks = db.get_today_tasks(emp_id)
+            if not tasks:
+                await query.edit_message_text(f"👤 {emp['name']} — tasklari yo'q.")
+                return
+
+            lines = [f"✏️ *{emp['name']} tasklari*\\n"]
+            for t in tasks:
+                status_icon = "✅" if t["status"] == "completed" else "⬜"
+                lines.append(f"{status_icon} *{t['time_slot']}*")
+                lines.append(f"   {t['task_text']}")
+            await query.edit_message_text(
+                "\\n".join(lines),
+                parse_mode="Markdown",
+                reply_markup=kb.edit_tasks_list_keyboard(tasks, emp_id),
+            )
+            return
+
+        if data.startswith("edittask_"):
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+            task_id = int(data.replace("edittask_", ""))
+            context.user_data["editing_task_id"] = task_id
+            context.user_data["awaiting_task_edit"] = True
+            await query.edit_message_text(
+                "✏️ *Task matnini yozib yuboring:*\\n\\n"
+                "Yangi task textini to'liq yozing. Vaqt slotini o'zgartirish kerak bo'lsa, "
+                "avval `HH:MM-HH:MM` formatida vaqtni + yangi matnni yozing, masalan:\\n"
+                "`10:00-11:00 Telegramga javob berish`",
+                parse_mode="Markdown",
+            )
+            return
+
+        # ── Admin: Xodimni tasdiqlash / rad etish ──
+        if data.startswith("apr_"):
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+            emp_id = int(data.replace("apr_", ""))
+            emp = db.get_employee_by_id(emp_id)
+            if not emp:
+                await query.edit_message_text("❌ Xodim topilmadi.")
+                return
+            if db.approve_employee(emp_id):
+                await query.edit_message_text(
+                    f"✅ *{emp['name']}* tasdiqlandi!\\\\n\\\\n"
+                    f"Endi tizimga kirishi mumkin.",
+                    parse_mode="Markdown",
+                )
+                # Xodimga xabar
+                try:
+                    await context.bot.send_message(
+                        emp_id,
+                        f"✅ *Tasdiqlandingiz!*\\\\n\\\\n"
+                        f"Endi check-in qilishingiz mumkin.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+            else:
+                await query.edit_message_text("❌ Xatolik yuz berdi.")
+            return
+
+        if data.startswith("rej_"):
+            if not is_admin(user_id):
+                await query.edit_message_text("❌ Ruxsat yo'q.")
+                return
+            emp_id = int(data.replace("rej_", ""))
+            emp = db.get_employee_by_id(emp_id)
+            if not emp:
+                await query.edit_message_text("❌ Xodim topilmadi.")
+                return
+            if db.reject_employee(emp_id):
+                await query.edit_message_text(
+                    f"❌ *{emp['name']}* rad etildi va o'chirildi.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text("❌ Xatolik yuz berdi.")
+            return
+
+        if data == "noop":
+            await query.edit_message_text("✅ Hech qanday o'zgarish yo'q.")
+            return
+
+        # ── Unknown callback ──
+        logger.warning(f"⚠️ Unknown callback data: {data}")
+        await query.edit_message_text(
+            "❌ Noma'lum buyruq. Iltimos, /start ni bosing.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Boshiga", callback_data="admin_back")],
+            ]),
+        )
+
+    except Exception as e:
+        logger.error(f"❌ Callback error ({data if 'data' in dir() else '?'}): {e}", exc_info=True)
+        try:
+            await query.answer(text="❌ Xatolik yuz berdi", show_alert=True)
+        except Exception:
+            pass
+
+
+async def refresh_task_message(query, user_id: int):
+    """Task xabarini yangilash"""
+    tasks = db.get_today_tasks(user_id)
+    if not tasks:
+        await query.edit_message_text("📋 Vazifalar yo'q.")
+        return
+
+    total = len(tasks)
+    completed = sum(1 for t in tasks if t["status"] == "completed")
+
+    text, _ = report.format_tasks_compact(user_id)
+    percent = round(completed / max(total, 1) * 100)
+
+    rows = []
+    for i, t in enumerate(tasks):
+        if i >= 5:
+            break
+        status_icon = "✅" if t["status"] == "completed" else "⬜"
+        time_slot = t.get("time_slot", "")
+        cb_data = f"task_toggle_{t['task_id']}"
+        rows.append([InlineKeyboardButton(f"{status_icon} {time_slot}", callback_data=cb_data)])
+
+    nav_row = []
+    if total > 5:
+        nav_row.append(InlineKeyboardButton(f"📋 Hammasi ({total})", callback_data="task_list_full"))
+    nav_row.append(InlineKeyboardButton("🔄", callback_data="task_refresh"))
+    if nav_row:
+        rows.append(nav_row)
+
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+    except Exception:
+        pass  # Message not modified
+
+
+# ══════════════════════════════════════
+#  TEXT HANDLER (registration name, late reason)
+# ══════════════════════════════════════
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Umumiy matn handler — registration va late reason"""
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    # ── Check-in deadline ni o'zgartirish ──
+    if context.user_data.get("awaiting_deadline"):
+        if text.isdigit():
+            val = int(text)
+            if 1 <= val <= 120:
+                db.set_setting("checkin_deadline_minutes", str(val))
+                context.user_data.pop("awaiting_deadline", None)
+                await update.message.reply_text(
+                    f"✅ Check-in deadline `{val}` daqiqaga o'zgartirildi!",
+                    parse_mode="Markdown",
+                )
+                return
+        await update.message.reply_text("❌ 1-120 oralig'ida son kiriting.")
+        return
+
+    # ── Ish kunlarini o'zgartirish ──
+    if context.user_data.get("awaiting_workdays"):
+        parts = [x.strip() for x in text.replace(",", " ").split()]
+        valid_days = []
+        for p in parts:
+            if p.isdigit() and 0 <= int(p) <= 6:
+                valid_days.append(int(p))
+            else:
+                await update.message.reply_text(
+                    f"❌ '{p}' noto'g'ri. 0-6 oralig'ida raqam kiriting (0=Dushanba)."
+                )
+                return
+        if not valid_days:
+            await update.message.reply_text("❌ Hech bo'lmaganda 1 kun tanlang.")
+            return
+        days_str = ",".join(str(d) for d in sorted(set(valid_days)))
+        db.set_setting("work_days", days_str)
+        context.user_data.pop("awaiting_workdays", None)
+        day_names = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba",
+                     "Juma", "Shanba", "Yakshanba"]
+        days_list = sorted(set(valid_days))
+        names = [day_names[d] for d in days_list]
+        await update.message.reply_text(
+            f"✅ Ish kunlari o'zgartirildi: {', '.join(names)}",
+        )
+        return
+
+    # ── Kechikish sababi ──
+    if user_id in pending_late_reason:
+        await handle_late_reason(update, context)
+        return
+
+    # ── Ro'yxatdan o'tish: ism kiritish ──
+    if context.user_data.get("awaiting_name"):
+        await handle_registration_name(update, context)
+        return
+
+    # ── Xodim tugmalari ──
+    emp = db.get_employee(user_id)
+    if emp:
+        await handle_employee_buttons(update, context)
+        return
+
+    # ── Hech narsa topilmadi ──
+    await update.message.reply_text(
+        "❌ Buyruq tushunarsiz. /start ni bosing."
+    )
+
+
+# ══════════════════════════════════════
+#  ADMIN KOMANDALARI
+# ══════════════════════════════════════
+
+def admin_required(func):
+    """Admin tekshiruvchi decorator"""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        if not is_admin(user_id):
+            await update.message.reply_text("❌ Bu buyruq faqat admin uchun.")
+            return
+        return await func(update, context)
+    return wrapper
 
 
 async def today_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bugungi davomat"""
     if not has_access(update.effective_user.id):
         return
-    shift = context.args[0] if context.args and context.args[0] in ("morning", "afternoon", "afternoon_alt") else None
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_report(branch, shift=shift)
-            await update.message.reply_text(text)
-            return
+    shift = context.args[0] if context.args and context.args[0] in ("morning", "evening") else None
     text = report.format_today_report(shift)
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def date_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kun bo'yicha davomat"""
     if not has_access(update.effective_user.id):
         return
     if not context.args:
         await update.message.reply_text("Format: /date YYYY-MM-DD")
         return
-    date_str = context.args[0]
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_report(branch, date_str=date_str)
-            await update.message.reply_text(text)
-            return
-    text = report.format_date_report(date_str)
-    await update.message.reply_text(text)
+    text = report.format_date_report(context.args[0])
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Haftalik davomat"""
     if not has_access(update.effective_user.id):
         return
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_week_report(branch)
-            await update.message.reply_text(text)
-            return
     text = report.format_week_report()
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def month_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Oylik davomat"""
     if not has_access(update.effective_user.id):
         return
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_month_report(branch)
-            await update.message.reply_text(text)
-            return
     text = report.format_month_report()
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def late_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kechikkanlar"""
     if not has_access(update.effective_user.id):
         return
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_late_report(branch)
-            await update.message.reply_text(text)
-            return
     text = report.format_late_report()
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def absent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kelmaganlar"""
     if not has_access(update.effective_user.id):
         return
-    shift = context.args[0] if context.args else None
-    if shift and shift not in ("morning", "afternoon", "afternoon_alt"):
-        shift = None
-
-    # Hozirgi vaqtga qarab default shift
-    if shift is None:
-        now = datetime.now(tz)
-        shift = "morning" if now.hour < 14 else "afternoon"
-
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            text = report.format_branch_missing_report(branch, shift)
-            await update.message.reply_text(text)
-            return
+    shift = context.args[0] if context.args and context.args[0] in ("morning", "evening") else None
     text = report.format_missing_report(shift)
-    await update.message.reply_text(text)
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
-async def branch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xodimlar ro'yxati"""
     if not has_access(update.effective_user.id):
         return
-    user_id = update.effective_user.id
-
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        if is_coordinator(user_id) or is_support_coordinator(user_id):
-            branch = get_coordinator_branch(user_id)
-            if branch:
-                text = report.format_branch_report(branch)
-                await update.message.reply_text(text)
-                return
-            else:
-                # Bir nechta filial coordinatori — hammasini ko'rsatish
-                await update.message.reply_text(
-                    "Filialni tanlang:",
-                    reply_markup=keyboard.branches_keyboard(),
-                )
-                return
-        await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
-        return
-
-    if not context.args:
-        branches = ", ".join(config.BRANCH_LIST)
-        await update.message.reply_text(f"Filiallar: {branches}")
-        return
-
-    branch = context.args[0].lower()
-    if branch not in config.BRANCHES:
-        await update.message.reply_text(f"Noto'g'ri filial. Mavjud: {', '.join(config.BRANCH_LIST)}")
-        return
-
-    text = report.format_branch_report(branch)
-    await update.message.reply_text(text)
-
-
-async def employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not has_access(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("Format: /employee TELEGRAM_ID")
-        return
-
-    try:
-        emp_id = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("ID raqam bo'lishi kerak.")
-        return
-
-    text = report.format_employee_report(emp_id)
-    await update.message.reply_text(text)
-
-
-async def list_employees_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not has_access(update.effective_user.id):
-        return
-
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        if is_coordinator(user_id) or is_support_coordinator(user_id):
-            branch = get_coordinator_branch(user_id)
-            if branch:
-                employees = db.get_employees_by_branch(branch)
-                if not employees:
-                    await update.message.reply_text(f"🏢 *{config.BRANCHES[branch]}* filialida xodimlar yo'q.")
-                    return
-                lines = [f"👥 *Xodimlar — {config.BRANCHES[branch]}*:", ""]
-                for e in employees:
-                    role = config.ROLE_LABELS.get(e["role"], e["role"])
-                    shift = "Ert" if e["shift"] == "morning" else "Kech"
-                    lines.append(f"  {e['telegram_id']} — {e['name']} ({role}, {shift})")
-                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-                return
-            else:
-                # Bir nechta filial coordinatori — hammasini ko'rsatish
-                employees = db.get_all_employees()
-                if not employees:
-                    await update.message.reply_text("👥 Xodimlar yo'q.")
-                    return
-                lines = ["👥 *Barcha xodimlar*:", ""]
-                for e in employees:
-                    branch = config.BRANCHES.get(e["branch"], e["branch"])
-                    role = config.ROLE_LABELS.get(e["role"], e["role"])
-                    shift = "Ert" if e["shift"] == "morning" else "Kech"
-                    lines.append(f"  {e['telegram_id']} — {e['name']} ({branch}, {role}, {shift})")
-                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-                return
-        await update.message.reply_text("Siz hech qaysi filialga biriktirilmagansiz.")
-        return
-
     employees = db.get_all_employees()
     if not employees:
-        await update.message.reply_text("Hali xodimlar qo'shilmagan.")
+        await update.message.reply_text("👥 Xodimlar yo'q.")
         return
 
-    lines = ["👥 *Barcha xodimlar:*", ""]
-    for branch_key in config.BRANCHES:
-        branch_emps = [e for e in employees if e["branch"] == branch_key]
-        if branch_emps:
-            lines.append(f"🏢 *{config.BRANCHES[branch_key]}*:")
-            for e in branch_emps:
-                role = config.ROLE_LABELS.get(e["role"], e["role"])
-                shift = "Ert" if e["shift"] == "morning" else "Kech"
-                lines.append(f"  {e['telegram_id']} — {e['name']} ({role}, {shift})")
-            lines.append("")
-
+    lines = ["👥 *Office Managerlar:*", ""]
+    for emp in employees:
+        branch = config.BRANCHES.get(emp.get("branch", ""), emp.get("branch", ""))
+        branch_name = emp.get("branch", "default")
+        shift_label = db.get_custom_shift_times().get(branch_name, {}).get(emp.get("shift", ""), {}).get("label", "")
+        lines.append(f"  • {emp['name']} — {branch} ({shift_label})")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
-async def add_employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_employee_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xodim qo'shish boshlash"""
     if not has_access(update.effective_user.id):
         return
+    context.user_data["add_state"] = "id"
+    await update.message.reply_text(
+        "Xodim qo'shish uchun ma'lumotlarni ketma-ket kiriting.\n\n"
+        "1️⃣ *Telegram ID* (raqam):\n"
+        "Misol: `123456789`",
+        parse_mode="Markdown",
+    )
 
-    # Format: /add TELEGRAM_ID NAME ROLE BRANCH SHIFT
-    args = context.args
-    if len(args) < 5:
+
+async def add_employee_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xodim qo'shish matn qabul qilish"""
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    state = context.user_data.get("add_state", "id")
+
+    if state == "id":
+        if not text.isdigit():
+            await update.message.reply_text("❌ ID raqam bo'lishi kerak. Qaytadan kiriting:")
+            return
+        context.user_data["add_emp_id"] = int(text)
+        context.user_data["add_state"] = "name"
+        await update.message.reply_text("2️⃣ *Ismi* (masalan: `Shaxzoda`):", parse_mode="Markdown")
+        return
+
+    elif state == "name":
+        if len(text) > 50:
+            await update.message.reply_text("❌ Ism juda uzun. Qaytadan kiriting:")
+            return
+        context.user_data["add_emp_name"] = text
+        context.user_data["add_state"] = "branch"
+        # Branch tanlash
+        from config import BRANCHES
+        lines = ["3️⃣ *Filialni* tanlang (raqamini yozing):"]
+        for i, (key, label) in enumerate(BRANCHES.items(), 1):
+            lines.append(f"  {i}. {label}")
+        lines.append("")
+        lines.append("Misol: `1`")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        return
+
+    elif state == "branch":
+        branch_map = list(config.BRANCHES.keys())
+        if text.isdigit() and 1 <= int(text) <= len(branch_map):
+            context.user_data["add_emp_branch"] = branch_map[int(text) - 1]
+        elif text in branch_map:
+            context.user_data["add_emp_branch"] = text
+        else:
+            await update.message.reply_text(f"❌ Noto'g'ri filial. 1-{len(branch_map)} oralig'ida kiriting:")
+            return
+
+        context.user_data["add_state"] = "shift"
         await update.message.reply_text(
-            "Format: /add TELEGRAM_ID NAME ROLE BRANCH SHIFT\n\n"
-            "Misol: /add 123456 \"Alisher Karimov\" office_manager integro morning\n\n"
-            "Role: office_manager yoki cashier\n"
-            "Branch: integro, amir_temur, xalqlar\n"
-            "Shift: morning yoki afternoon"
+            "4️⃣ *Smenani* tanlang:\n\n"
+            "1. Ertalab (08:00-17:00)\n"
+            "2. Kechki (14:00-21:00)\n\n"
+            "Misol: `1`",
+            parse_mode="Markdown",
         )
         return
 
-    try:
-        tid = int(args[0])
-    except ValueError:
-        await update.message.reply_text("Telegram ID raqam bo'lishi kerak.")
+    elif state == "shift":
+        shift = None
+        if text == "1":
+            shift = "morning"
+            shift_label = "Ertalab (08:00-17:00)"
+        elif text == "2":
+            shift = "evening"
+            shift_label = "Kechki (14:00-21:00)"
+        else:
+            await update.message.reply_text("❌ 1 yoki 2 kiriting:")
+            return
+
+        # Xodimni qo'shish
+        emp_id = context.user_data["add_emp_id"]
+        name = context.user_data["add_emp_name"]
+        branch = context.user_data["add_emp_branch"]
+
+        success = db.add_employee(emp_id, name, role="office_manager", branch=branch, shift=shift)
+        if success:
+            # Default tasklarni o'rnatish (smena bo'yicha)
+            default_tasks = config.DEFAULT_TASKS.get(shift, [])
+            if default_tasks:
+                db.set_employee_tasks(emp_id, default_tasks)
+
+            branch_label = config.BRANCHES.get(branch, branch)
+            await update.message.reply_text(
+                f"✅ *Xodim qo'shildi!*\n\n"
+                f"👤 {name}\n🆔 {emp_id}\n📍 {branch_label}\n🕐 {shift_label}",
+                parse_mode="Markdown",
+            )
+
+            # Sheets ga qo'shish
+            emp = db.get_employee(emp_id)
+            if emp:
+                sheets.sync_employee_to_sheets(emp)
+        else:
+            await update.message.reply_text("❌ Xatolik yuz berdi.")
+
+        # Tozalash
+        context.user_data.pop("add_state", None)
+        context.user_data.pop("add_emp_id", None)
+        context.user_data.pop("add_emp_name", None)
+        context.user_data.pop("add_emp_branch", None)
         return
-
-    name = args[1]
-    role = args[2].lower()
-    branch = args[3].lower()
-    shift = args[4].lower()
-
-    if role not in config.ROLES:
-        await update.message.reply_text(f"Noto'g'ri role. Mavjud: {', '.join(config.ROLES)}")
-        return
-
-    if branch not in config.BRANCHES:
-        await update.message.reply_text(f"Noto'g'ri filial. Mavjud: {', '.join(config.BRANCH_LIST)}")
-        return
-
-    if shift not in ("morning", "afternoon", "afternoon_alt"):
-        await update.message.reply_text("Shift: morning, afternoon yoki afternoon_alt")
-        return
-
-    success = db.add_employee(tid, name, role, branch, shift)
-    if success:
-        emp = db.get_employee(tid)
-        if emp:
-            sheets.sync_employee_to_sheets(emp)
-
-        branch_label = config.BRANCHES[branch]
-        role_label = config.ROLE_LABELS[role]
-        shift_label = config.SHIFTS[shift]["label"]
-
-        await update.message.reply_text(
-            f"✅ Xodim qo'shildi:\n"
-            f"ID: {tid}\n"
-            f"Ism: {name}\n"
-            f"Rol: {role_label}\n"
-            f"Filial: {branch_label}\n"
-            f"Smene: {shift_label}"
-        )
-    else:
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
 
 
 async def remove_employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xodim o'chirish"""
     if not has_access(update.effective_user.id):
         return
-
-    if not context.args:
-        await update.message.reply_text("Format: /remove TELEGRAM_ID")
-        return
-
-    try:
-        tid = int(context.args[0])
-    except ValueError:
-        await update.message.reply_text("ID raqam bo'lishi kerak.")
-        return
-
-    emp = db.get_employee(tid)
-    if not emp:
-        await update.message.reply_text("Xodim topilmadi.")
-        return
-
-    success = db.remove_employee(tid)
-    if success:
-        await update.message.reply_text(f"✅ {emp['name']} o'chirildi.")
+    if context.args:
+        try:
+            emp_id = int(context.args[0])
+            emp = db.get_employee(emp_id)
+            if emp:
+                db.remove_employee(emp_id)
+                await update.message.reply_text(f"✅ {emp['name']} o'chirildi.")
+            else:
+                await update.message.reply_text("❌ Xodim topilmadi.")
+        except ValueError:
+            await update.message.reply_text("❌ ID raqam bo'lishi kerak.")
     else:
-        await update.message.reply_text("❌ Xatolik yuz berdi.")
+        # Xodimlar ro'yxatini ko'rsatish
+        employees = db.get_all_employees()
+        if not employees:
+            await update.message.reply_text("👥 Xodimlar yo'q.")
+            return
+        lines = ["Xodimni tanlang (ID sini yozing):", ""]
+        for emp in employees:
+            lines.append(f"  {emp['telegram_id']} — {emp['name']}")
+        lines.append("")
+        lines.append("Misol: /remove 123456789")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
-# ══════════════════════════════════════
-#  TUGMALAR BILAN ISHLASH (private chat)
-# ══════════════════════════════════════
-
-async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin tugmalarini qayta ishlash."""
-    user_id = update.effective_user.id
-    text = update.message.text
-
-    if not has_access(user_id):
-        # Xodim tugmalarini tekshirish
-        emp = db.get_employee(user_id)
-        if emp:
-            if text == "👤 Mening ma'lumotim":
-                branch = config.BRANCHES.get(emp["branch"], emp["branch"])
-                role = config.ROLE_LABELS.get(emp["role"], emp["role"])
-                shift = config.SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
-                checked_in = db.is_checked_in(user_id)
-                checked_out = db.is_checked_out(user_id)
-                status_text = ""
-                if checked_in and not checked_out:
-                    status_text = "\n🟢 Bugun check-in qilingan"
-                elif checked_in and checked_out:
-                    status_text = "\n✅ Bugun to'liq"
-                else:
-                    status_text = "\n⚪ Hali check-in qilinmagan"
-
-                await update.message.reply_text(
-                    f"👤 {emp['name']}\n"
-                    f"📍 {branch} | {role}\n"
-                    f"🕐 {shift}"
-                    f"{status_text}",
-                    reply_markup=keyboard.employee_keyboard(),
-                )
-                return
-            elif text == "📋 Qanday ishlatish?":
-                await update.message.reply_text(
-                    "📋 *Qanday ishlatish?*\n\n"
-                    "1. Ishga kelganingizda *botga video* yuboring\n"
-                    "2. Ketayotganingizda yana *video* yuboring\n\n"
-                    "Bot avtomatik check-in/out qiladi ✅",
-                    parse_mode="Markdown",
-                    reply_markup=keyboard.employee_keyboard(),
-                )
-                return
+async def tasks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bugungi tasklar holati (admin uchun)"""
+    if not has_access(update.effective_user.id):
         return
-
-    if text == "📅 Bugun":
-        await today_cmd(update, context)
-    elif text == "📊 Haftalik":
-        await week_cmd(update, context)
-    elif text == "📆 Oylik":
-        await month_cmd(update, context)
-    elif text == "⚠️ Kechikkanlar":
-        await late_cmd(update, context)
-    elif text == "❌ Kelmaganlar":
-        await absent_cmd(update, context)
-    elif text == "👥 Xodimlar":
-        await list_employees_cmd(update, context)
-    elif text == "🗑️ Xodimni o'chirish":
-        await show_remove_employees(update, context)
-    elif text == "🕐 Ish vaqtini o'zgartirish":
-        await show_simple_work_time_employees(update, context)
-    elif text == "🏢 Filiallar":
-        user_id = update.effective_user.id
-        if not is_admin(user_id):
-            branch = get_coordinator_branch(user_id)
-            if branch:
-                await show_branch_report(update, branch)
-                return
-        await update.message.reply_text(
-            "Filialni tanlang:",
-            reply_markup=keyboard.branches_keyboard(),
-        )
-    elif text == "🏢 Integro (Office Manager)":
-        await show_branch_report(update, "integro")
-    elif text == "🏢 Amir Temur (Office Manager)":
-        await show_branch_report(update, "amir_temur")
-    elif text == "🏢 Xalqlar (Office Manager)":
-        await show_branch_report(update, "xalqlar")
-    elif text == "🏢 Online":
-        await show_branch_report(update, "online")
-    elif text == "📚 Academic Support":
-        await show_branch_report(update, "academic_support")
-    elif text == "🔙 Orqaga":
-        user_id = update.effective_user.id
-        if is_admin(user_id):
-            await update.message.reply_text(
-                "Asosiy menyu:",
-                reply_markup=keyboard.admin_keyboard(),
-            )
-        else:
-            branch = get_coordinator_branch(user_id)
-            await update.message.reply_text(
-                "Asosiy menyu:",
-                reply_markup=keyboard.coordinator_keyboard(branch),
-            )
+    text = report.format_all_tasks_report()
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
-async def show_branch_report(update: Update, branch: str):
-    """Filial hisobotini ko'rsatish va keyboardni qaytarish."""
-    text = report.format_branch_report(branch)
+async def task_week_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Haftalik task statistikasi"""
+    if not has_access(update.effective_user.id):
+        return
+    text = report.format_task_completion_week()
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def setup_tasks_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tasklarni sozlash (admin)"""
+    if not has_access(update.effective_user.id):
+        return
+    text = "📝 *Tasklarni sozlash*\n\n"
+    text += "Quyidagi smenalar uchun default tasklarni o'rnatishingiz mumkin:\\n"
+    shift_labels = {"morning": "☀️ Ertalab (08:00-17:00)", "evening": "🌙 Kechki (14:00-21:00)"}
+    for key in config.DEFAULT_TASKS:
+        label = shift_labels.get(key, key.capitalize())
+        text += f"  • {label}\\n"
+    text += "\nTugmalardan foydalaning:"
     await update.message.reply_text(
         text,
-        reply_markup=keyboard.admin_keyboard(),
-    )
-
-
-async def show_remove_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """O'chirish uchun xodimlar ro'yxati."""
-    if not has_access(update.effective_user.id):
-        return
-
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            employees = db.get_employees_by_branch(branch)
-        else:
-            employees = []
-    else:
-        employees = db.get_all_employees()
-
-    if not employees:
-        await update.message.reply_text("Hali xodimlar qo'shilmagan.")
-        return
-
-    kb = keyboard.remove_employees_keyboard(employees)
-    await update.message.reply_text(
-        "🗑️ *O'chiriladigan xodimni tanlang:*",
         parse_mode="Markdown",
-        reply_markup=kb,
+        reply_markup=kb.admin_task_management_keyboard(),
     )
 
 
-async def show_simple_work_time_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ish vaqtini tahrirlash uchun xodimlar ro'yxati (soddalashtirilgan)."""
-    if not has_access(update.effective_user.id):
-        return
-
+async def handle_registration_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ro'yxatdan o'tish: ism kiritish"""
     user_id = update.effective_user.id
-    if not is_admin(user_id):
-        branch = get_coordinator_branch(user_id)
-        if branch:
-            employees = db.get_employees_by_branch(branch)
-        else:
-            # Bir nechta filial coordinatori yoki bosh koordinator — hammasini ko'rsatish
-            employees = db.get_all_employees()
-    else:
-        employees = db.get_all_employees()
-
-    if not employees:
-        await update.message.reply_text("Hali xodimlar qo'shilmagan.")
+    text = update.message.text
+    name = text.strip()
+    if not name or len(name) > 50:
+        await update.message.reply_text("❌ Iltimos, to'g'ri ism kiriting.")
         return
 
-    kb = keyboard.edit_employees_keyboard(employees)
+    branch = context.user_data.get("reg_branch", "online")
+    shift = context.user_data.get("reg_shift", "morning")
+
+    # Self-registration: admin tasdiqlashi kerak (active=0)
+    db.register_pending_employee(user_id, name, role="office_manager", branch=branch, shift=shift)
+
+    # Default tasklarni o'rnatish (smena bo'yicha) — tasdiqlanganda ochiladi
+    default_tasks = config.DEFAULT_TASKS.get(shift, [])
+    if default_tasks:
+        db.set_employee_tasks(user_id, default_tasks)
+
+    branch_label = config.BRANCHES.get(branch, branch)
+
+    context.user_data.pop("awaiting_name", None)
+    context.user_data.pop("reg_branch", None)
+    context.user_data.pop("reg_shift", None)
+
+    # Adminlarga xabar yuborish
     await update.message.reply_text(
-        "🕐 *Ish vaqti o'zgartiriladigan xodimni tanlang:*",
+        f"✅ *Ma'lumotlaringiz qabul qilindi!*\n\n"
+        f"📍 {branch_label}\n"
+        f"👤 {name}\n\n"
+        "Admin tasdiqlashidan so'ng tizimga kirasiz. Kuting...",
         parse_mode="Markdown",
-        reply_markup=kb,
     )
 
-
-async def handle_simple_work_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Soddalashtirilgan ish vaqti callback handler."""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    if not has_access(user_id):
-        return
-
-    data = query.data
-
-    # ── Bekor qilish ──
-    if data == "worktime_cancel":
-        await query.edit_message_text("🔙 Bekor qilindi.", reply_markup=None)
-        return
-
-    # ── Xodimni tanlash ──
-    if data.startswith("editemp_"):
-        emp_id = int(data[8:])
-        emp = db.get_employee(emp_id)
-        if not emp:
-            await query.edit_message_text("❌ Xodim topilmadi.")
-            return
-        name = emp["name"]
-        from config import SHIFTS
-        default_shift = SHIFTS.get(emp["shift"], {})
-        default_start = f"{default_shift.get('start', '?'):02d}:00"
-        default_end = f"{default_shift.get('end', '?'):02d}:00"
-        current_start = emp.get("custom_work_start")
-        current_end = emp.get("custom_work_end")
-        msg = (
-            f"👤 *{name}*\n\n"
-            f"📌 Joriy:\n"
-            f"   🕐 Kelish: {current_start or f'`{default_start}`'}\n"
-            f"   🚶 Ketish: {current_end or f'`{default_end}`'}\n\n"
-            "Ish vaqtini belgilang:"
-        )
-        kb = keyboard.work_time_keyboard(emp_id, current_start, current_end)
-        await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=kb)
-        return
-
-    # ── 08:00 dan 17:00 gacha ──
-    if data.startswith("setsimple_"):
-        parts = data.split("_", 4)
-        emp_id = int(parts[1])
-        start_str = parts[2]  # "08:00" (kolon bilan)
-        end_str = parts[3]   # "17:00"
-        emp = db.get_employee(emp_id)
-        name = emp["name"] if emp else str(emp_id)
-        db.update_employee_work_time(emp_id, "checkin", start_str)
-        db.update_employee_work_time(emp_id, "checkout", end_str)
-        # Sheets'ga ham yozish (Railway restartda saqlanishi uchun)
-        sheets.sync_custom_time_to_sheets(emp_id, start_str, end_str)
-        await query.edit_message_text(
-            f"✅ *{name}* — ish vaqti `{start_str} dan {end_str} gacha` qilib belgilandi!",
-            parse_mode="Markdown",
-        )
-        return
-
-    # ── Default ga qaytarish ──
-    if data.startswith("setdefault_"):
-        emp_id = int(data[11:])
-        emp = db.get_employee(emp_id)
-        name = emp["name"] if emp else str(emp_id)
-        db.update_employee_work_time(emp_id, "checkin", "clear")
-        db.update_employee_work_time(emp_id, "checkout", "clear")
-        # Sheets'dan ham o'chirish
-        sheets.sync_custom_time_to_sheets(emp_id)
-        await query.edit_message_text(
-            f"✅ *{name}* — ish vaqti default shift ga qaytarildi!",
-            parse_mode="Markdown",
-        )
-        return
-
-
-async def handle_employee_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inline xodim tugmasi bosilganda."""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    if not has_access(user_id):
-        return
-
-    data = query.data
-    if data.startswith("emp_"):
-        emp_id = int(data[4:])
-        text = report.format_employee_report(emp_id)
-        await query.message.reply_text(text)
-
-    elif data.startswith("del_"):
-        emp_id = int(data[4:])
-        emp = db.get_employee(emp_id)
-        if not emp:
-            await query.edit_message_text("Xodim topilmadi.")
-            return
-
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "✅ Ha, o'chirilsin",
-                    callback_data=f"delconfirm_{emp_id}"
-                ),
-                InlineKeyboardButton(
-                    "❌ Bekor qilish",
-                    callback_data="delcancel"
-                ),
-            ]
-        ])
-
-        branch = config.BRANCHES.get(emp["branch"], emp["branch"])
-        role = config.ROLE_LABELS.get(emp["role"], emp["role"])
-        shift = config.SHIFTS.get(emp["shift"], {}).get("label", emp["shift"])
-
-        await query.edit_message_text(
-            f"❗️ *{emp['name']}* ni o'chirishni tasdiqlaysizmi?\n\n"
-            f"📍 {branch} | {role} | {shift}\n"
-            f"🆔 `{emp_id}`",
-            parse_mode="Markdown",
-            reply_markup=kb,
-        )
-
-    elif data.startswith("delconfirm_"):
-        emp_id = int(data[11:])
-        emp = db.get_employee(emp_id)
-        name = emp["name"] if emp else str(emp_id)
-
-        db.remove_employee(emp_id)
-        await query.edit_message_text(
-            f"✅ *{name}* o'chirildi.",
-            parse_mode="Markdown",
-        )
-
-    elif data == "delcancel":
-        await query.edit_message_text("❌ O'chirish bekor qilindi.")
-
-
-# ══════════════════════════════════════
-#  BUTTON-BASED RO'YXATDAN O'TISH
-# ══════════════════════════════════════
-
-async def handle_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Registration tugmalarini qayta ishlash (filial → smena → tasdiqlash)."""
-    query = update.callback_query
-    await query.answer()
-
-    data = query.data
-
-    if data.startswith("regbranch_"):
-        # Filial tanlandi → ism so'rash
-        parts = data.split("_", 2)  # regbranch_BRANCH
-        branch = parts[1]
-
-        user_id = query.from_user.id
-        pending_registration[user_id] = {"branch": branch}
-
-        await query.edit_message_text(
-            f"📍 *{config.BRANCHES.get(branch, branch)}* tanlandi.\n\n"
-            "✏️ *Ismingizni kiriting:*",
-            parse_mode="Markdown",
-        )
-
-    elif data.startswith("regshift_"):
-        # Smena tanlandi → admin ga tasdiqlashga yuborish
-        parts = data.split("_", 2)  # regshift_BRANCH_SHIFT
-        branch = parts[1]
-        shift = parts[2]
-        user_id = query.from_user.id
-
-        reg = pending_registration.get(user_id, {})
-        name = reg.get("name", query.from_user.first_name)
-
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-
-        branch_label = config.BRANCHES.get(branch, branch)
-        shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
-
-        # Tasdiqlash so'rovi admin yoki support coordinator ga
-        approve_kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton(
-                    "✅ Tasdiqlash",
-                    callback_data=f"approve_{user_id}_{branch}_{shift}_{name}"
-                ),
-                InlineKeyboardButton(
-                    "❌ Rad etish",
-                    callback_data=f"reject_{user_id}_{name}"
-                ),
-            ]
-        ])
-
-        admin_msg = (
-            f"🆕 *Yangi xodim:*\n"
-            f"👤 {name}\n"
-            f"📍 {branch_label}\n"
-            f"🕐 {shift_label}\n"
-            f"🆔 `{user_id}`"
-        )
-
-        if branch == "academic_support":
-            # Academic Support → support coordinator ga
-            target_ids = [config.SUPPORT_COORDINATOR_ID]
-            reply_text = (
-                f"👤 *{name}*\n"
-                f"📍 {branch_label}\n"
-                f"🕐 {shift_label}\n\n"
-                "✅ Ma'lumotlaringiz *Support Coordinator*ga yuborildi.\n"
-                "Tasdiqlangach sizga xabar keladi."
-            )
-        else:
-            # Office manager → admin ga
-            target_ids = config.ADMIN_IDS
-            reply_text = (
-                f"👤 *{name}*\n"
-                f"📍 {branch_label}\n"
-                f"🕐 {shift_label}\n\n"
-                "✅ Ma'lumotlaringiz *admin*ga yuborildi.\n"
-                "Tasdiqlangach sizga xabar keladi."
-            )
-
-        for target_id in target_ids:
-            try:
-                await context.bot.send_message(
-                    target_id, admin_msg,
-                    parse_mode="Markdown",
-                    reply_markup=approve_kb,
-                )
-            except Exception as e:
-                logger.error(f"Admin {target_id} ga so'rov: {e}")
-
-        await query.edit_message_text(
-            reply_text,
-            parse_mode="Markdown",
-        )
-
-    elif data.startswith("approve_"):
-        # Admin tasdiqladi — ism callback data dan olinadi
-        parts = data.split("_", 4)  # approve_USERID_BRANCH_SHIFT_NAME
-        new_user_id = int(parts[1])
-        branch = parts[2]
-        shift = parts[3]
-        telegram_name = parts[4] if len(parts) > 4 else str(new_user_id)
-
-        user_id = query.from_user.id
-        if not is_admin(user_id) and user_id != config.SUPPORT_COORDINATOR_ID:
-            await query.answer("❌ Ruxsat yo'q", show_alert=True)
-            return
-
-        # To'g'ridan-to'g'ri saqlaymiz — ism callback data dan
-        pending_registration.pop(new_user_id, None)  # tozalash
-        role = "academic_support" if branch == "academic_support" else "office_manager"
-        success = db.add_employee(new_user_id, telegram_name, role, branch, shift)
-        if success:
-            emp = db.get_employee(new_user_id)
-            if emp:
-                sheets.sync_employee_to_sheets(emp)
-
-            branch_label = config.BRANCHES.get(branch, branch)
-            shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
-
-            await query.edit_message_text(
-                f"✅ *{telegram_name}* tasdiqlandi!\n\n"
-                f"📍 {branch_label}\n"
-                f"🕐 {shift_label}",
-                parse_mode="Markdown",
-            )
-
-            # Xodimga xabar
-            try:
-                await context.bot.send_message(
-                    new_user_id,
-                    f"✅ *Ro'yxatdan o'tdingiz!*\n\n"
-                    f"👤 {telegram_name}\n"
-                    f"📍 {branch_label}\n"
-                    f"🕐 {shift_label}\n\n"
-                    "Endi *botga video* yuborib check-in qiling!",
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.error(f"Xodimga xabar: {e}")
-
-            # Coordinator va Ziyodaga xabar
-            notification_msg = (
-                f"✅ *Yangi xodim qo'shildi!*\n\n"
-                f"👤 {telegram_name}\n"
-                f"📍 {branch_label}\n"
-                f"🕐 {shift_label}\n"
-                f"🆔 `{new_user_id}`"
-            )
-            # Branch coordinatorlariga
-            branch_coords = config.COORDINATORS.get(branch, [])
-            for coord_id in branch_coords:
-                try:
-                    await context.bot.send_message(
-                        coord_id, notification_msg,
-                        parse_mode="Markdown",
-                    )
-                except Exception as e:
-                    logger.error(f"Coordinator {coord_id} ga xabar: {e}")
-            # Ziyodaga umumiy coordinator
-            try:
-                await context.bot.send_message(
-                    909473085, notification_msg,
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.error(f"Ziyodaga xabar: {e}")
-        else:
-            await query.edit_message_text(
-                query.message.text + "\n\n❌ *Xatolik yuz berdi*",
-                parse_mode="Markdown",
-            )
-
-    elif data.startswith("approvecancel_"):
-        user_id = query.from_user.id
-        pending_approvals.pop(user_id, None)
-        await query.edit_message_text(
-            query.message.text.replace(
-                "\n\n✏️ *Ism-familiyani kiriting:*", ""
-            ) + "\n\n❌ Bekor qilindi.",
-            parse_mode="Markdown",
-        )
-
-    elif data.startswith("reject_"):
-        # Admin rad etdi
-        parts = data.split("_", 2)  # reject_USERID_NAME
-        new_user_id = int(parts[1])
-        name = parts[2] if len(parts) > 2 else str(new_user_id)
-
-        user_id = query.from_user.id
-        if not is_admin(user_id) and user_id != config.SUPPORT_COORDINATOR_ID:
-            await query.answer("❌ Ruxsat yo'q", show_alert=True)
-            return
-
+    # Adminlarga xabar
+    for admin_id in config.ADMIN_IDS:
         try:
             await context.bot.send_message(
-                new_user_id,
-                "❌ Ro'yxatdan o'tish rad etildi. Admin bilan bog'laning.",
+                admin_id,
+                f"🆕 *Yangi xodim tasdiqlanishi kutilmoqda*\n\n"
+                f"👤 {name}\n"
+                f"📍 {branch_label}\n"
+                f"🆔 {user_id}\n\n"
+                "Admin panel orqali tasdiqlang:",
+                parse_mode="Markdown",
             )
         except Exception:
             pass
+    return
+# ══════════════════════════════════════
+#  ADMIN TUGMALARI
+# ══════════════════════════════════════
 
-        await query.edit_message_text(
-            query.message.text + f"\n\n❌ *Rad etildi*",
+async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    # ── Video qoidabuzarlik sababini qabul qilish ──
+    if context.user_data.get("awaiting_violation_reason"):
+        reason = text.strip()
+        context.user_data.pop("awaiting_violation_reason", None)
+        logger.warning(f"⚠️ Qoidabuzarlik sababi: user_id={user_id}, reason='{reason}'")
+        await update.message.reply_text(
+            f"✅ Sabab qayd etildi. Endi jonli video yuboring!",
             parse_mode="Markdown",
         )
-
-
-# ══════════════════════════════════════
-#  RO'YXATDAN O'TISH — ISM KIRITISH
-# ══════════════════════════════════════
-
-async def men_yangilandim(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """'men yangilandim' matni — xodim ma'lumotlarini Sheets dan qayta yuklaydi."""
-    user_id = update.effective_user.id
-    text = (update.message.text or "").strip().lower()
-
-    if "men yangilandim" not in text and "men yangiladim" not in text:
-        return  # pastga o'tadi
-
-    emp = db.get_employee(user_id)
-    if not emp:
-        await update.message.reply_text("❌ Siz tizimda ro'yxatdan o'tmagansiz. Iltimos botga /start bosing.")
         return
 
-    # Sheets dan qayta yuklash
-    updated = sheets.refresh_employee_from_sheets(user_id)
-    if updated:
-        emp = db.get_employee(user_id)
-        role_label = config.ROLE_LABELS.get(emp.get("role", ""), emp.get("role", ""))
-        branch_label = config.BRANCHES.get(emp.get("branch", ""), emp.get("branch", ""))
-        await update.message.reply_text(
-            f"✅ Ma'lumotlaringiz yangilandi!\n\n"
-            f"👤 {emp['name']}\n"
-            f"🏢 {branch_label}\n"
-            f"📋 {role_label}\n"
-            f"⏰ Smena: {emp.get('shift', 'morning')}\n\n"
-            f"🔁 /start bosing."
-        )
-    else:
-        await update.message.reply_text("✅ Ma'lumotlaringiz tekshirildi, hammasi yangi.")
-
-    return  # stop — boshqa handlerlar ishlamaydi
-
-
-async def handle_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ro'yxatdan o'tish va admin tasdiqlash vaqtida ism matnini qabul qilish."""
-    user_id = update.effective_user.id
-
-    # ── Kechikkan xodim sabab yozishi ──
-    if user_id in pending_late_reason:
-        reason = update.message.text.strip()
-        if len(reason) < 3:
-            await update.message.reply_text("Iltimos, sababni to'liq yozing (kamida 3 harf):")
-            return
-
-        # Eslatmalarni to'xtatamiz
-        for job in context.job_queue.get_jobs_by_name(f"late_reason_{user_id}"):
-            job.schedule_removal()
-
-        today_str = pending_late_reason.pop(user_id)["date"]
-        db.set_late_reason(user_id, today_str, reason)
-
-        emp = db.get_employee(user_id)
-        if emp:
-            branch = config.BRANCHES.get(emp["branch"], emp["branch"])
-            role = config.ROLE_LABELS.get(emp["role"], emp["role"])
-            msg = (
-                f"⚠️ *Kechikish sababi* ({branch} | {role})\n\n"
-                f"👤 {emp['name']}\n"
-                f"📝 Sabab: _{reason}_"
-            )
-            # Adminlarga
-            for admin_id in config.ADMIN_IDS:
-                try:
-                    await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
-                except Exception:
-                    pass
-            # Branch coordinatorga
-            for coord_id in config.COORDINATORS.get(emp["branch"], []):
-                try:
-                    await context.bot.send_message(coord_id, msg, parse_mode="Markdown")
-                except Exception:
-                    pass
-            # Ziyodaga
-            try:
-                await context.bot.send_message(909473085, msg, parse_mode="Markdown")
-            except Exception:
-                pass
-
-        await update.message.reply_text(
-            "✅ Sababingiz qabul qilindi. Keyingi safar o'z vaqtida kelishga harakat qiling! 😊"
-        )
-        return
-
-    # Admin tasdiqlash jarayonida — ism kiritish
-    if user_id in pending_approvals:
-        approval = pending_approvals.pop(user_id)
-        name = update.message.text.strip()
-        if len(name) < 2 or len(name) > 50:
-            await update.message.reply_text("Ism 2-50 belgi oralig'ida bo'lishi kerak. Qaytadan yozing:")
-            return
-
-        new_user_id = approval["telegram_id"]
-        branch = approval["branch"]
-        shift = approval["shift"]
-
-        success = db.add_employee(new_user_id, name, "office_manager", branch, shift)
-        if success:
-            emp = db.get_employee(new_user_id)
-            if emp:
-                sheets.sync_employee_to_sheets(emp)
-
-            branch_label = config.BRANCHES.get(branch, branch)
-            shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
-
+    # ── "Bajara olmayman" sababini qabul qilish ──
+    if user_id in pending_task_reason:
+        task_id = pending_task_reason.pop(user_id)
+        reason = text.strip()
+        # Sababni saqlash
+        try:
             await update.message.reply_text(
-                f"✅ *{name}* tasdiqlandi!\n\n"
-                f"📍 {branch_label}\n"
-                f"🕐 {shift_label}",
+                f"❌ Sabab qayd etildi: *{reason}*",
                 parse_mode="Markdown",
             )
+        except Exception as e:
+            logger.error(f"Task reason save error: {e}")
+        return
 
-            # Xodimga xabar
-            try:
-                await context.bot.send_message(
-                    new_user_id,
-                    f"✅ *Ro'yxatdan o'tdingiz!*\n\n"
-                    f"👤 {name}\n"
-                    f"📍 {branch_label}\n"
-                    f"🕐 {shift_label}\n\n"
-                    "Endi *botga video* yuborib check-in qiling!",
-                    parse_mode="Markdown",
-                )
-            except Exception as e:
-                logger.error(f"Xodimga xabar: {e}")
+    # ── Admin task tahrirlash ──
+    if context.user_data.get("awaiting_task_edit"):
+        task_id = context.user_data.pop("editing_task_id", None)
+        context.user_data.pop("awaiting_task_edit", None)
+        if not task_id:
+            await update.message.reply_text("❌ Xatolik: task topilmadi.")
+            return
+
+        new_text = text.strip()
+        success = db.update_employee_task(task_id, new_text)
+        if success:
+            await update.message.reply_text(
+                f"✅ *Task yangilandi!*\n\n{new_text}",
+                parse_mode="Markdown",
+                reply_markup=kb.admin_keyboard(),
+            )
         else:
-            await update.message.reply_text("❌ Xatolik yuz berdi.")
+            await update.message.reply_text(
+                "❌ Xatolik yuz berdi.",
+                reply_markup=kb.admin_keyboard(),
+            )
         return
 
-    # Ro'yxatdan o'tish jarayonida emasmi?
-    if user_id not in pending_registration:
-        return  # Boshqa handler ishlasin
-
-    name = update.message.text.strip()
-    if len(name) < 2 or len(name) > 50:
-        await update.message.reply_text("Ism 2-50 belgi oralig'ida bo'lishi kerak. Qaytadan yozing:")
+    # ── Xodim qo'shish (admin) ──
+    if context.user_data.get("add_state"):
+        await add_employee_text(update, context)
         return
 
-    reg = pending_registration[user_id]
-    reg["name"] = name
-    branch = reg["branch"]
+    # ── Ro'yxatdan o'tish: filial tanlash ──
+    if context.user_data.get("reg_state") == "branch":
+        branch = None
+        for key, label in config.BRANCHES.items():
+            if label in text or key in text.lower():
+                branch = key
+                break
+        if not branch:
+            await update.message.reply_text("❌ Iltimos, filialni tugmalardan tanlang.")
+            return
+        context.user_data["reg_branch"] = branch
+        context.user_data["reg_state"] = "shift"
+        await update.message.reply_text(
+            "Smenani tanlang:",
+            reply_markup=kb.registration_shifts_keyboard(),
+        )
+        return
 
+    # ── Ro'yxatdan o'tish: smena tanlash ──
+    if context.user_data.get("reg_state") == "shift":
+        shift = None
+        if "ertalab" in text.lower():
+            shift = "morning"
+        elif "kechki" in text.lower():
+            shift = "evening"
+        if not shift:
+            await update.message.reply_text("❌ Iltimos, smenani tugmalardan tanlang.")
+            return
+        context.user_data["reg_shift"] = shift
+        branch = context.user_data.get("reg_branch", "online")
+        shift_label = db.get_custom_shift_times().get(branch, {}).get(shift, {}).get("label", shift)
+        context.user_data.pop("reg_state", None)
+        context.user_data["awaiting_name"] = True
+        await update.message.reply_text(
+            f"📍 {config.BRANCHES.get(branch, branch)}\n"
+            f"🕐 {shift_label}\n\n"
+            "Iltimos, *ismingizni* yozib yuboring:",
+            parse_mode="Markdown",
+        )
+        return
+
+    # ── Ro'yxatdan o'tish (ism kiritish) har doim ishlashi kerak ──
+    if context.user_data.get("awaiting_name"):
+        await handle_registration_name(update, context)
+        return
+
+    if not has_access(user_id):
+        # Xodim tugmalariga o'tkazish
+        await handle_employee_buttons(update, context)
+        return
+
+    if text == "📊 Bugungi davomat":
+        await today_cmd(update, context)
+    elif text == "📋 Bugungi tasklar":
+        await tasks_cmd(update, context)
+    elif text == "❌ Kelmaganlar":
+        await absent_cmd(update, context)
+    elif text == "⏰ Kechikkanlar":
+        await late_cmd(update, context)
+    elif text == "📅 Haftalik hisobot":
+        await week_cmd(update, context)
+    elif text == "📆 Oylik hisobot":
+        await month_cmd(update, context)
+    elif text == "👥 Xodimlar ro'yxati":
+        await list_cmd(update, context)
+    elif text == "➕ Xodim qo'shish":
+        await add_employee_start(update, context)
+    elif text == "➖ Xodim o'chirish":
+        await remove_employee_cmd(update, context)
+    elif text == "📋 Tasklarni sozlash":
+        await setup_tasks_cmd(update, context)
+    elif text == "⏰ Ish vaqtini sozlash":
+        await work_time_settings_menu(update, context)
+    elif text == "🆕 Tasdiqlanmagan xodimlar":
+        pending = db.get_pending_employees()
+        if not pending:
+            await update.message.reply_text(
+                "✅ Barcha xodimlar tasdiqlangan.",
+                reply_markup=kb.admin_keyboard(),
+            )
+            return
+        text_lines = ["🆕 *Tasdiqlanmagan xodimlar:*\n"]
+        for emp in pending:
+            text_lines.append(f"👤 {emp['name']} — {emp['branch']} ({emp['shift']})")
+        await update.message.reply_text(
+            "\n".join(text_lines),
+            parse_mode="Markdown",
+            reply_markup=kb.pending_employees_keyboard(),
+        )
+    else:
+        # Xodim tugmalari
+        await handle_employee_buttons(update, context)
+
+
+# ══════════════════════════════════════
+#  WORK TIME SETTINGS
+# ══════════════════════════════════════
+
+async def work_time_settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ish vaqtini sozlash menyusini ko'rsatish"""
+    settings = db.get_custom_shift_times()
+    ms_d = settings["default"]["morning"]
+    es_d = settings["default"]["evening"]
+    ms_o = settings["online"]["morning"]
+    es_o = settings["online"]["evening"]
+    dl = settings["checkin_deadline_minutes"]
+    days = settings["work_days"]
+    day_count = len(days)
+
+    text = (
+        "⏰ *Ish vaqti sozlamalari*\n\n"
+        "*🏢 Integro / AT / XD / Central*\n"
+        f"🌅 Ertalab: {ms_d['start']:02d}:00 - {ms_d['end']:02d}:00\n"
+        f"🌆 Kechki: {es_d['start']:02d}:00 - {es_d['end']:02d}:00\n\n"
+        "*🏡 Online*\n"
+        f"🌅 Ertalab: {ms_o['start']:02d}:00 - {ms_o['end']:02d}:00\n"
+        f"🌆 Kechki: {es_o['start']:02d}:00 - {es_o['end']:02d}:00\n\n"
+        f"⏱ *Check-in deadline:* {dl} daqiqa\n"
+        f"📅 *Ish kunlari:* {day_count}/7\n\n"
+        "O'zgartirish uchun tugmalardan foydalaning:"
+    )
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=kb.work_time_settings_keyboard(),
+    )
+
+
+async def show_wts_menu(query):
+    """WTS menyusini callback sifatida ko'rsatish"""
+    settings = db.get_custom_shift_times()
+    ms_d = settings["default"]["morning"]
+    es_d = settings["default"]["evening"]
+    ms_o = settings["online"]["morning"]
+    es_o = settings["online"]["evening"]
+    dl = settings["checkin_deadline_minutes"]
+    days = settings["work_days"]
+    day_count = len(days)
+
+    text = (
+        "⏰ *Ish vaqti sozlamalari*\n\n"
+        "*🏢 Integro / AT / XD / Central*\n"
+        f"🌅 Ertalab: {ms_d['start']:02d}:00 - {ms_d['end']:02d}:00\n"
+        f"🌆 Kechki: {es_d['start']:02d}:00 - {es_d['end']:02d}:00\n\n"
+        "*🏡 Online*\n"
+        f"🌅 Ertalab: {ms_o['start']:02d}:00 - {ms_o['end']:02d}:00\n"
+        f"🌆 Kechki: {es_o['start']:02d}:00 - {es_o['end']:02d}:00\n\n"
+        f"⏱ *Check-in deadline:* {dl} daqiqa\n"
+        f"📅 *Ish kunlari:* {day_count}/7\n\n"
+        "O'zgartirish uchun tugmalardan foydalaning:"
+    )
+    await query.edit_message_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=kb.work_time_settings_keyboard(),
+    )
+
+
+def adj_shift_hour(shift_key: str, field: str, delta: int, query):
+    """Shift soatini o'zgartirish (callback_data da saqlanadi)"""
     from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "🌅 Ertalab (08:00-14:00)",
-            callback_data=f"regshift_{branch}_morning"
-        )],
-        [InlineKeyboardButton(
-            "🌙 Kechki (14:00-21:00)",
-            callback_data=f"regshift_{branch}_afternoon"
-        )],
-        [InlineKeyboardButton(
-            "🌙 Kechki (13:00-21:00)",
-            callback_data=f"regshift_{branch}_afternoon_alt"
-        )],
-    ])
+    # Map shift_key -> branch + shift
+    is_online = shift_key.startswith("online_")
+    branch_key = "online" if is_online else "default"
+    inner_shift = shift_key.replace("online_", "") if is_online else shift_key
+    db_prefix = "online_" if is_online else "shift_"
 
-    await update.message.reply_text(
-        f"👤 *{name}* — qabul qilindi!\n\n"
-        "Endi *smenangizni* tanlang:",
+    # DB key name
+    db_key = f"{db_prefix}{inner_shift}_{field}"
+
+    # Hozirgi qiymatni DB dan olish
+    settings = db.get_custom_shift_times()
+    current = settings[branch_key][inner_shift][field]
+    new_hour = (current + delta) % 24
+
+    shift_label = "🌅 Ertalab" if inner_shift == "morning" else "🌆 Kechki"
+    branch_label = " (Online)" if is_online else " (Integro/AT/XD/Central)"
+    status_text = (
+        f"{shift_label}{branch_label}\n\n"
+        f"{'Boshlanishi' if field == 'start' else 'Tugashi'}: `{new_hour:02d}:00`\n\n"
+        "Tugmalar bilan soatni o'zgartiring, keyin *✅ Saqlash* ni bosing."
+    )
+
+    # DB ga darhol yozish
+    db.set_setting(db_key, str(new_hour))
+
+    try:
+        query.edit_message_text(
+            status_text,
+            parse_mode="Markdown",
+            reply_markup=kb.shift_edit_keyboard(shift_key),
+        )
+    except Exception:
+        pass
+
+
+def show_shift_current(query, shift_key: str, field: str):
+    """Hozirgi qiymatni ko'rsatish"""
+    is_online = shift_key.startswith("online_")
+    branch_key = "online" if is_online else "default"
+    inner_shift = shift_key.replace("online_", "") if is_online else shift_key
+    settings = db.get_custom_shift_times()
+    current = settings[branch_key][inner_shift][field]
+    label = "Boshlanishi" if field == "start" else "Tugashi"
+    try:
+        query.answer(f"{label}: {current:02d}:00", show_alert=True)
+    except Exception:
+        pass
+
+
+async def save_shift(query, shift_key: str):
+    """Shift sozlamalarini saqlash va tasdiqlash"""
+    is_online = shift_key.startswith("online_")
+    branch_key = "online" if is_online else "default"
+    inner_shift = shift_key.replace("online_", "") if is_online else shift_key
+    settings = db.get_custom_shift_times()
+    s = settings[branch_key][inner_shift]
+    shift_label = "🌅 Ertalab" if inner_shift == "morning" else "🌆 Kechki"
+    branch_label = " (Online)" if is_online else " (Integro/AT/XD/Central)"
+    await query.edit_message_text(
+        f"✅ *{shift_label}{branch_label} saqlandi!*\n\n"
+        f"Boshlanishi: `{s['start']:02d}:00`\n"
+        f"Tugashi: `{s['end']:02d}:00`\n\n"
+        "O'zgartirishlar darhol amal qiladi.",
         parse_mode="Markdown",
-        reply_markup=kb,
+        reply_markup=kb.work_time_settings_keyboard(),
     )
 
 
 # ══════════════════════════════════════
-#  AUTO-CHECK TASKS (scheduler dan chaqiriladi)
+#  ERROR HANDLER
 # ══════════════════════════════════════
 
-async def auto_check_morning(context: ContextTypes.DEFAULT_TYPE):
-    """Avtomatik 08:10 — ertalabki smena kelmaganlar."""
-    if is_sunday():
-        return  # Yakshanba tekshirmaymiz
-    missing = db.get_missing_today("morning")
-    if not missing:
-        return
-
-    lines = [f"⚠️ *Ertalabki smena* — hali kelmaganlar (08:10):", ""]
-    for m in missing:
-        branch = config.BRANCHES.get(m["branch"], m["branch"])
-        role = config.ROLE_LABELS.get(m["role"], m["role"])
-        lines.append(f"❌ {m['name']} ({branch}, {role})")
-
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await context.bot.send_message(
-                admin_id,
-                "\n".join(lines),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Admin {admin_id} ga xabar yuborib bo'lmadi: {e}")
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} caused error: {context.error}")
 
 
-async def auto_check_afternoon(context: ContextTypes.DEFAULT_TYPE):
-    """Avtomatik 14:10 — kechki smena kelmaganlar."""
-    if is_sunday():
-        return
-    missing = db.get_missing_today("afternoon")
-    if not missing:
-        return
+# ══════════════════════════════════════
+#  DAILY REMINDER
+# ══════════════════════════════════════
 
-    lines = [f"⚠️ *Kechki smena (14:00-21:00)* — hali kelmaganlar (14:10):", ""]
-    for m in missing:
-        branch = config.BRANCHES.get(m["branch"], m["branch"])
-        role = config.ROLE_LABELS.get(m["role"], m["role"])
-        lines.append(f"❌ {m['name']} ({branch}, {role})")
-
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await context.bot.send_message(
-                admin_id,
-                "\n".join(lines),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Admin {admin_id} ga xabar yuborib bo'lmadi: {e}")
-
-
-async def auto_check_afternoon_alt(context: ContextTypes.DEFAULT_TYPE):
-    """Avtomatik 13:10 — kechki smena (13:00-21:00) kelmaganlar."""
-    if is_sunday():
-        return
-    missing = db.get_missing_today("afternoon_alt")
-    if not missing:
-        return
-
-    lines = [f"⚠️ *Kechki smena (13:00-21:00)* — hali kelmaganlar (13:10):", ""]
-    for m in missing:
-        branch = config.BRANCHES.get(m["branch"], m["branch"])
-        role = config.ROLE_LABELS.get(m["role"], m["role"])
-        lines.append(f"❌ {m['name']} ({branch}, {role})")
-
-    for admin_id in config.ADMIN_IDS:
-        try:
-            await context.bot.send_message(
-                admin_id,
-                "\n".join(lines),
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.error(f"Admin {admin_id} ga xabar yuborib bo'lmadi: {e}")
-
-
-async def shift_reminder(context: ContextTypes.DEFAULT_TYPE, shift: str):
-    """Smenadan 10 daqiqa oldin xodimlarga eslatma."""
-    if is_sunday():
-        return
-
-    employees = db.get_employees_by_shift(shift)
-    if not employees:
-        return
-
-    shift_label = config.SHIFTS.get(shift, {}).get("label", shift)
-    shift_time = {"morning": "08:00", "afternoon": "14:00", "afternoon_alt": "13:00"}.get(shift, "13:00")
-
-    for emp in employees:
+async def morning_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Ertalabki eslatma — morning shift xodimlariga"""
+    morning_emps = db.get_employees_by_shift("morning")
+    for emp in morning_emps:
         try:
             await context.bot.send_message(
                 emp["telegram_id"],
-                f"⏰ *Eslatma!* {shift_time} da smenangiz boshlanadi.\n\n"
-                f"Ishga kelganingizda *botga video* yuborishni unutmang!",
+                "🌅 *Xayrli tong!*\n\n"
+                "Bugungi smenangiz boshlandi (08:00).\n"
+                "Check-in uchun *video* yuboring!",
                 parse_mode="Markdown",
             )
-        except Exception:
-            pass  # Xodim botni bloklagan bo'lishi mumkin
-
-
-# ══════════════════════════════════════
-#  SHEETS STATUS
-# ══════════════════════════════════════
-
-async def sheets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Google Sheets ulanish holatini tekshirish (faqat admin)."""
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Faqat adminlar uchun.")
-        return
-
-    has = "✅ bor"
-    no = "❌ yoq"
-    lines = ["📊 *Google Sheets Status*"]
-    lines.append("")
-    lines.append(f"🔑 SHEET_KEY: {has if config.SHEET_KEY else no}")
-    lines.append(f"🔑 GOOGLE_SERVICE_ACCOUNT_JSON: {has if config.GOOGLE_SERVICE_ACCOUNT_JSON else no}")
-    lines.append(f"🔑 GOOGLE_SERVICE_ACCOUNT_B64: {has if config.GOOGLE_SERVICE_ACCOUNT_B64 else no}")
-    lines.append("")
-
-    try:
-        client = sheets._get_client()
-        if client is None:
-            lines.append("❌ *Auth:* Google Sheets ga ulanish muvaffaqiyatsiz!")
-            lines.append("   Service Account ma'lumotlarini tekshiring.")
-        else:
-            sheet = sheets._get_sheet()
-            if sheet is None:
-                lines.append("❌ *Sheet:* Sheet ochilmadi!")
-                lines.append("   SHEET_KEY va service account ruxsatlarini tekshiring.")
-            else:
-                lines.append(f"✅ *Sheet:* {sheet.title}")
-                lines.append(f"📄 Worksheets: {len(sheet.worksheets())} ta")
-                for ws in sheet.worksheets():
-                    lines.append(f"   • {ws.title} ({ws.row_count} qator)")
-                lines.append("")
-                lines.append("✅ Google Sheets ulanish OK!")
-    except Exception as e:
-        lines.append(f"❌ *Xatolik:* {e}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def notify_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bugun kelgan xodimlarga xabar yuborish (admin uchun)."""
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Faqat adminlar uchun.")
-        return
-
-    today = datetime.now(tz).strftime("%Y-%m-%d")
-    records = db.get_date_attendance(today)
-    if not records:
-        await update.message.reply_text("❌ Bugun hech kim kelmagan.")
-        return
-
-    sent = 0
-    failed = 0
-    for r in records:
-        emp_id = r["employee_id"]
-        msg = (
-            "🔄 *Bot yangilandi!*\n\n"
-            "Iltimos, /start ni bosing ✅"
-        )
-        try:
-            await context.bot.send_message(emp_id, msg, parse_mode="Markdown")
-            sent += 1
         except Exception as e:
-            logger.error(f"Xabarni yuborib bo'lmadi {emp_id}: {e}")
-            failed += 1
+            logger.error(f"Morning reminder error {emp['telegram_id']}: {e}")
 
-    await update.message.reply_text(
-        f"✅ {sent} ta xodimga xabar yuborildi."
-        + (f"\n❌ {failed} ta xodimga yuborilmadi (botni blocklagan)." if failed else "")
-    )
+
+async def evening_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Kechki eslatma — evening shift xodimlariga"""
+    evening_emps = db.get_employees_by_shift("evening")
+    for emp in evening_emps:
+        try:
+            await context.bot.send_message(
+                emp["telegram_id"],
+                "🌆 *Xayrli kech!*\n\n"
+                "Kechki smenangiz boshlandi (14:00).\n"
+                "Check-in uchun *video* yuboring!",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.error(f"Evening reminder error {emp['telegram_id']}: {e}")
+
+
+async def check_out_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Check-out eslatmasi"""
+    all_emps = db.get_all_employees()
+    now = datetime.now(tz)
+    for emp in all_emps:
+        if db.is_checked_in(emp["telegram_id"]) and not db.is_checked_out(emp["telegram_id"]):
+            try:
+                await context.bot.send_message(
+                    emp["telegram_id"],
+                    "⏰ *Smena tugashiga 1 soat qoldi!*\n\n"
+                    "Check-out qilishni unutmang!",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════
-#  HEALTH CHECK HTTP SERVER (Railway uchun)
+#  TASK VAQTI ESMATLARI + TUGMALAR
 # ══════════════════════════════════════
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
+# Duplicate eslatmalarni oldini olish: DB da saqlanadi
+# (reminder_key -> sent_at) - restartda takrorlanmasligi uchun
 
-    def log_message(self, format, *args):
-        logger.debug("Health check: %s", format % args)
+# "Bajara olmayman" sabab kutayotgan xodimlar: {user_id: task_id}
+pending_task_reason = {}
 
-def start_health_server():
-    """Railway health check uchun oddiy HTTP server."""
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    logger.info("✅ Health check server started on port %d", port)
+async def task_time_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Task vaqti kelganda xodimga avtomatik eslatma + tugmalar
+    Har 60 sekundda ishlaydi, lekin bir taskni 10 daqiqada 1 marta eslatadi"""
+    now = datetime.now(tz)
+    today_str = now.strftime("%Y-%m-%d")
+    now_ts = now.timestamp()
+
+    all_emps = db.get_all_employees()
+    for emp in all_emps:
+        user_id = emp["telegram_id"]
+        tasks = db.get_today_tasks(user_id)
+        for t in tasks:
+            if t["status"] == "completed":
+                continue
+
+            time_slot = t.get("time_slot", "")
+            if not time_slot or "-" not in time_slot:
+                continue
+
+            start_time_str = time_slot.split("-")[0].strip()
+            end_time_str = time_slot.split("-")[1].strip()
+
+            # Vaqtni parse qilish
+            try:
+                sh, sm = map(int, start_time_str.split(":"))
+                eh, em = map(int, end_time_str.split(":"))
+                task_start = now.replace(hour=sh, minute=sm, second=0, microsecond=0)
+                task_end = now.replace(hour=eh, minute=em, second=0, microsecond=0)
+                if task_end <= task_start:  # Yarrim kechadan o'tuvchi task (masalan 22:00-00:00)
+                    task_end += timedelta(days=1)
+            except (ValueError, IndexError):
+                continue
+
+            # Hali vaqti kelmagan bo'lsa o'tkazib yuboramiz
+            if now < task_start:
+                continue
+
+            # Task vaqti tugagan bo'lsa o'tkazib yuboramiz
+            if now > task_end:
+                continue
+
+            reminder_key = f"{today_str}_{user_id}_{t['task_id']}"
+            last_sent = db.get_task_reminder(reminder_key)
+
+            # 10 daqiqadan kam bo'lsa o'tkazib yuboramiz (600 sekund)
+            if now_ts - last_sent < 600:
+                continue
+
+            db.set_task_reminder(reminder_key, now_ts)
+
+            task_text = t.get("task_text", "")
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Bajarishni boshladim", callback_data=f"task_started_{t['task_id']}")],
+                [InlineKeyboardButton("❌ Bajara olmayman", callback_data=f"task_cant_do_{t['task_id']}")],
+            ])
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    f"⏰ *Task vaqti!*\n\n"
+                    f"🕐 *{time_slot}*\n"
+                    f"📝 {task_text}\n\n"
+                    f"Quyidagilardan birini tanlang:",
+                    parse_mode="Markdown",
+                    reply_markup=kb,
+                )
+            except Exception as e:
+                logger.error(f"Task reminder error {user_id}: {e}")
+
 
 # ══════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════
 
-async def auto_notify_on_startup(app: Application):
-    """Bot restart qilinganda bugun kelgan xodimlarga avtomatik xabar yuborish."""
-    logger.info("🔄 Bot restart — avtomatik xabarnoma yuborilmoqda...")
-
-    today = datetime.now(tz).strftime("%Y-%m-%d")
-    records = db.get_date_attendance(today)
-    if not records:
-        logger.info("Bugun hech kim kelmagan, xabarnoma yuborilmadi.")
-        return
-
-    sent = 0
-    failed = 0
-    for r in records:
-        emp_id = r["employee_id"]
-        msg = (
-            "🔄 *Bot yangilandi!*\n\n"
-            "Iltimos, /start ni bosing ✅"
-        )
-        try:
-            await app.bot.send_message(emp_id, msg, parse_mode="Markdown")
-            sent += 1
-        except Exception as e:
-            logger.error(f"Xabarni yuborib bo'lmadi {emp_id}: {e}")
-            failed += 1
-
-    logger.info(f"✅ {sent} ta xodimga xabar yuborildi" + (f", {failed} ta yuborilmadi" if failed else ""))
+async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add flow ni bekor qilish"""
+    context.user_data.pop("add_state", None)
+    context.user_data.pop("add_emp_id", None)
+    context.user_data.pop("add_emp_name", None)
+    context.user_data.pop("add_emp_branch", None)
+    await update.message.reply_text("❌ Bekor qilindi.", reply_markup=kb.admin_keyboard())
 
 
 def main():
-    """Botni ishga tushirish."""
-    logger.info("Bot ishga tushmoqda...")
-
-    # Health check server (Railway deploy muvaffaqiyati uchun)
-    start_health_server()
-
-    # Bazani yaratish
+    # DB ni initializatsiya
     db.init_db()
 
-    # Sheets dan xodimlarni yuklash va o'chirilganlarni sinxronlash
-    sheets_ok = sheets._get_client() is not None
-    if sheets_ok:
-        logger.info("✅ Google Sheets auth muvaffaqiyatli!")
-        sheets.load_employees_from_sheets()
-        sheets.sync_deletions_from_sheets()
-        # Attendance yozuvlarini ham Sheets dan tiklash — BARCHA sanalar
-        restored = sheets.load_attendance_from_sheets()
-        if restored:
-            logger.info(f"📋 Sheets dan {len(restored)} ta attendance yozuvi tiklandi")
-    else:
-        logger.warning("❌ Google Sheets auth muvaffaqiyatsiz! Sheets sinxronizatsiyasi o'tkazib yuborildi.")
+    token = config.BOT_TOKEN
+    if not token:
+        logger.error("BOT_TOKEN topilmadi! .env faylini tekshiring.")
+        return
 
-    # Academic support bo'lmagan xodimlarni o'chirish (faqat academic qolsin)
-    db.deactivate_non_academic()
+    app = Application.builder().token(token).build()
 
-    # Application (post_init orqali auto-notify)
-    app = Application.builder().token(config.BOT_TOKEN).post_init(auto_notify_on_startup).build()
-
-    # --- Admin komandalari (faqat private) ---
+    # ── Handlers ──
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+
+    # Admin komandalari
     app.add_handler(CommandHandler("today", today_cmd))
     app.add_handler(CommandHandler("date", date_cmd))
     app.add_handler(CommandHandler("week", week_cmd))
     app.add_handler(CommandHandler("month", month_cmd))
     app.add_handler(CommandHandler("late", late_cmd))
     app.add_handler(CommandHandler("absent", absent_cmd))
-    app.add_handler(CommandHandler("branch", branch_cmd))
-    app.add_handler(CommandHandler("employee", employee_cmd))
-    app.add_handler(CommandHandler("list", list_employees_cmd))
-    app.add_handler(CommandHandler("add", add_employee_cmd))
+    app.add_handler(CommandHandler("list", list_cmd))
+    app.add_handler(CommandHandler("add", add_employee_start))
     app.add_handler(CommandHandler("remove", remove_employee_cmd))
-    app.add_handler(CommandHandler("sheets", sheets_cmd))
-    app.add_handler(CommandHandler("notify", notify_cmd))
+    app.add_handler(CommandHandler("tasks", tasks_cmd))
+    app.add_handler(CommandHandler("taskweek", task_week_cmd))
 
-    # --- Guruhdagi video handler ---
+    # Video handler
     app.add_handler(MessageHandler(
         filters.VIDEO | filters.VIDEO_NOTE,
-        handle_group_video
+        handle_video
     ))
 
-    # --- Tugma handlerlari (faqat private) ---
-    button_texts = [
-        "📅 Bugun", "📊 Haftalik", "📆 Oylik",
-        "⚠️ Kechikkanlar", "❌ Kelmaganlar",
-        "👥 Xodimlar", "🏢 Filiallar", "🗑️ Xodimni o'chirish",
-        "🕐 Ish vaqtini o'zgartirish",
-        "🏢 Integro (Office Manager)", "🏢 Amir Temur (Office Manager)", "🏢 Xalqlar (Office Manager)", "🏢 Online",
-        "📚 Academic Support",
-        "🔙 Orqaga",
-        # Xodim tugmalari
-        "👤 Mening ma'lumotim", "📋 Qanday ishlatish?",
-    ]
-    # Har bir matnni escape qilamiz — '?' kabi regex maxsus belgilari uchun
-    escaped = "|".join(re.escape(t) for t in button_texts)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.Regex(f"^({escaped})$"),
-        handle_admin_buttons,
-    ))
+    # Callback query handler
+    app.add_handler(CallbackQueryHandler(handle_callback))
 
-    # "men yangilandim" — xodim ma'lumotlarini yangilash
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE
-        & filters.Regex(r"(?i)^men\s+yangilandim$|^men\s+yangiladim$"),
-        men_yangilandim,
-    ))
+    # Text handler (eng oxirgi)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_buttons))
 
-    # Ro'yxatdan o'tish — ism kiritish (Private, TEXT, tugma emas, komanda emas)
-    # FAQAT pending_registration yoki pending_approvals bo'lsa qabul qilamiz
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
-        handle_name_input,
-    ))
+    # Error handler
+    app.add_error_handler(error_handler)
 
-    # Inline callback — xodimlar ro'yxati + o'chirish
-    app.add_handler(CallbackQueryHandler(handle_employee_callback, pattern="^(emp_|del_|delconfirm_|delcancel)"))
+    # ── Job queue: Eslatmalar ──
+    job_q = app.job_queue
 
-    # Inline callback — ish vaqtini tahrirlash
-    app.add_handler(CallbackQueryHandler(handle_simple_work_time, pattern="^(edit|set|worktime)"))
-
-    # Registration + Approve/Reject (hammasi bitta handler)
-    app.add_handler(CallbackQueryHandler(handle_registration, pattern="^(regbranch|regshift|approve|reject|approvecancel)_"))
-
-    # --- Scheduler: PTB JobQueue orqali avtomatik tekshirish ---
-    app.job_queue.run_daily(
-        auto_check_morning,
-        time=dt_time(hour=8, minute=10, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),  # Dushanba-Shanba
-    )
-    app.job_queue.run_daily(
-        auto_check_afternoon,
-        time=dt_time(hour=14, minute=10, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),
-    )
-    app.job_queue.run_daily(
-        auto_check_afternoon_alt,
-        time=dt_time(hour=13, minute=10, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),
+    # Ertalabki eslatma (07:50)
+    job_q.run_daily(
+        morning_reminder,
+        time=datetime.strptime("07:50", "%H:%M").time(),
+        name="morning_reminder",
     )
 
-    # Shift eslatmalari (10 daqiqa oldin)
-    app.job_queue.run_daily(
-        lambda ctx: shift_reminder(ctx, "morning"),
-        time=dt_time(hour=7, minute=50, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),
-    )
-    app.job_queue.run_daily(
-        lambda ctx: shift_reminder(ctx, "afternoon"),
-        time=dt_time(hour=13, minute=50, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),
-    )
-    app.job_queue.run_daily(
-        lambda ctx: shift_reminder(ctx, "afternoon_alt"),
-        time=dt_time(hour=12, minute=50, tzinfo=tz),
-        days=(0, 1, 2, 3, 4, 5),
+    # Kechki eslatma (13:50)
+    job_q.run_daily(
+        evening_reminder,
+        time=datetime.strptime("13:50", "%H:%M").time(),
+        name="evening_reminder",
     )
 
-    logger.info("Bot polling boshlanmoqda...")
-    app.run_polling()
+    # Check-out eslatma (morning: 14:00, evening: 00:00)
+    job_q.run_daily(
+        check_out_reminder,
+        time=datetime.strptime("14:00", "%H:%M").time(),
+        name="checkout_reminder_morning",
+    )
+    job_q.run_daily(
+        check_out_reminder,
+        time=datetime.strptime("00:00", "%H:%M").time(),
+        name="checkout_reminder_evening",
+    )
+
+    # Task vaqti eslatmasi (har daqiqada tekshiradi)
+    job_q.run_repeating(
+        task_time_reminder,
+        interval=60,
+        first=10,
+        name="task_time_reminder",
+    )
+
+    logger.info("🤖 Office Manager Bot ishga tushdi!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
