@@ -627,6 +627,75 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "🏢 *Admin panel*",
                 parse_mode="Markdown",
+                reply_markup=kb.admin_keyboard(),
+            )
+            return
+
+        # ── Xodimni tasdiqlash ──
+        if data.startswith("apr_"):
+            emp_id = int(data.replace("apr_", ""))
+            if db.approve_employee(emp_id):
+                emp = db.get_employee(emp_id)
+                name = emp["name"] if emp else emp_id
+                await query.edit_message_text(
+                    f"✅ *{name}* tasdiqlandi!",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Qayta yuklash", callback_data="refresh_pending")]
+                    ]),
+                )
+                # Xodimga xabar yuborish
+                try:
+                    await context.bot.send_message(
+                        emp_id,
+                        "✅ *Tasdiqlandingiz!* Endi /start bosib ishga kirishingiz mumkin.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+            else:
+                await query.edit_message_text("❌ Xatolik yuz berdi.")
+            return
+
+        # ── Xodimni rad etish ──
+        if data.startswith("rej_"):
+            emp_id = int(data.replace("rej_", ""))
+            emp = db.get_employee(emp_id)
+            if emp:
+                db.remove_employee(emp_id)
+                await query.edit_message_text(
+                    f"❌ *{emp['name']}* rad etildi.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Qayta yuklash", callback_data="refresh_pending")]
+                    ]),
+                )
+                try:
+                    await context.bot.send_message(
+                        emp_id,
+                        "❌ Arizangiz rad etildi. Batafsil ma'lumot uchun admin bilan bog'laning.",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    pass
+            return
+
+        # ── Tasdiqlanmagan xodimlar ro'yxatini yangilash ──
+        if data == "refresh_pending":
+            pending = db.get_pending_employees()
+            if not pending:
+                await query.edit_message_text(
+                    "✅ Barcha xodimlar tasdiqlangan.",
+                    reply_markup=kb.admin_keyboard(),
+                )
+                return
+            text_lines = ["🆕 *Tasdiqlanmagan xodimlar:*\n"]
+            for emp in pending:
+                text_lines.append(f"👤 {emp['name']} — {emp['branch']} ({emp['shift']})")
+            await query.edit_message_text(
+                "\n".join(text_lines),
+                parse_mode="Markdown",
+                reply_markup=kb.pending_employees_keyboard(),
             )
             return
 
