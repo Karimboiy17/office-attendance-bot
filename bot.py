@@ -1950,6 +1950,16 @@ def main():
 
     # Google Sheets dan xodimlarni sinxronlash (startup da)
     if sheets.get_client():
+        # 1. Mavjud xodimlarni Sheets ga yozish (agar yo'q bo'lsa)
+        local_emps = db.get_all_employees()
+        if local_emps:
+            synced_count = 0
+            for emp in local_emps:
+                if sheets.sync_employee_to_sheets(emp):
+                    synced_count += 1
+            logger.info(f"[Startup] {synced_count}/{len(local_emps)} xodim Sheets ga yozildi")
+
+        # 2. Sheets dan xodimlarni o'qib, DB ni to'ldirish
         synced = sheets.get_employees_from_sheets()
         if synced:
             for emp in synced:
