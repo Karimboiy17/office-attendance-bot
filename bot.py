@@ -1947,6 +1947,28 @@ def main():
     )
 
     logger.info("🤖 Office Manager Bot ishga tushdi!")
+
+    # Google Sheets dan xodimlarni sinxronlash (startup da)
+    if sheets.get_client():
+        synced = sheets.get_employees_from_sheets()
+        if synced:
+            for emp in synced:
+                existing = db.get_employee(emp["telegram_id"])
+                if not existing:
+                    db.add_employee(
+                        emp["telegram_id"],
+                        emp["name"],
+                        role=emp.get("role", "office_manager"),
+                        branch=emp.get("branch", "integro"),
+                        shift=emp.get("shift", "morning"),
+                    )
+                    logger.info(f"[Startup] Xodim Sheets dan qo'shildi: {emp['name']} (ID: {emp['telegram_id']})")
+            logger.info(f"[Startup] Sheets dan {len(synced)} ta xodim sinxronlandi")
+        else:
+            logger.info("[Startup] Sheets da xodimlar topilmadi")
+    else:
+        logger.info("[Startup] Google Sheets ulanishi yo'q")
+
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 

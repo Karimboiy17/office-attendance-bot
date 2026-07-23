@@ -105,3 +105,44 @@ def sync_employee_to_sheets(emp: dict):
     except Exception as e:
         print(f"[Sheets] sync_employee error: {e}")
         return False
+
+
+def get_employees_from_sheets() -> list[dict]:
+    """Xodimlar ro'yxatini Google Sheets dan o'qish"""
+    client = get_client()
+    if not client or not SHEET_KEY:
+        return []
+    try:
+        sheet = client.open_by_key(SHEET_KEY)
+        try:
+            ws = sheet.worksheet("Xodimlar")
+        except Exception:
+            return []
+        rows = ws.get_all_values()
+        if len(rows) < 2:
+            return []
+        # First row = header
+        employees = []
+        for row in rows[1:]:
+            if not row or not row[0] or not row[0].strip():
+                continue
+            try:
+                emp = {
+                    "telegram_id": int(row[0].strip()),
+                    "name": row[1].strip() if len(row) > 1 else "",
+                    "role": row[2].strip() if len(row) > 2 else "office_manager",
+                    "branch": row[3].strip() if len(row) > 3 else "integro",
+                    "shift": row[4].strip() if len(row) > 4 else "morning",
+                }
+                # Branch nomini kalitga o'tkazish
+                for key, label in BRANCHES.items():
+                    if label.lower() in emp["branch"].lower():
+                        emp["branch"] = key
+                        break
+                employees.append(emp)
+            except (ValueError, IndexError):
+                continue
+        return employees
+    except Exception as e:
+        print(f"[Sheets] get_employees error: {e}")
+        return []
