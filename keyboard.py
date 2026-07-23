@@ -1,6 +1,7 @@
 """Office Manager Bot — Keyboard layout"""
 
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+import db
 
 
 # ══════════════════════════════════════
