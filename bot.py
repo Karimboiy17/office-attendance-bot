@@ -243,10 +243,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name=f"late_reason_{user_id}",
             )
 
-        # Guruhga e'lon
+        # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
+                await update.message.forward_copy(config.GROUP_ID)
             except Exception:
                 pass
 
@@ -295,10 +296,11 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(msg, parse_mode="Markdown")
 
-        # Guruhga e'lon
+        # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
+                await update.message.forward_copy(config.GROUP_ID)
             except Exception:
                 pass
 
