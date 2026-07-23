@@ -1950,7 +1950,7 @@ def main():
 
     # Google Sheets dan xodimlarni sinxronlash (startup da)
     if sheets.get_client():
-        # 1. Mavjud xodimlarni Sheets ga yozish (agar yo'q bo'lsa)
+        # 1. Mavjud xodimlarni Sheets ga yozish
         local_emps = db.get_all_employees()
         if local_emps:
             synced_count = 0
@@ -1959,7 +1959,18 @@ def main():
                     synced_count += 1
             logger.info(f"[Startup] {synced_count}/{len(local_emps)} xodim Sheets ga yozildi")
 
-        # 2. Sheets dan xodimlarni o'qib, DB ni to'ldirish
+        # 2. Adminlarni ham employee qilib qo'shish (agar yo'q bo'lsa)
+        admin_names = {1054482233: "Karimboy", 909473085: "Ziyoda"}
+        for admin_id in config.ADMIN_IDS:
+            if not db.get_employee(admin_id):
+                name = admin_names.get(admin_id, f"Admin {admin_id}")
+                db.add_employee(admin_id, name, role="office_manager", branch="integro", shift="morning")
+                logger.info(f"[Startup] Admin {name} (ID: {admin_id}) employee ga qo'shildi")
+                emp = db.get_employee(admin_id)
+                if emp:
+                    sheets.sync_employee_to_sheets(emp)
+
+        # 3. Sheets dan xodimlarni o'qib, DB ni to'ldirish
         synced = sheets.get_employees_from_sheets()
         if synced:
             for emp in synced:
