@@ -627,7 +627,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 "🏢 *Admin panel*",
                 parse_mode="Markdown",
-                reply_markup=kb.admin_keyboard(),
             )
             return
 
@@ -686,7 +685,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not pending:
                 await query.edit_message_text(
                     "✅ Barcha xodimlar tasdiqlangan.",
-                    reply_markup=kb.admin_keyboard(),
                 )
                 return
             text_lines = ["🆕 *Tasdiqlanmagan xodimlar:*\n"]
