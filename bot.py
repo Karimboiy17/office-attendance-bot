@@ -1418,14 +1418,19 @@ async def handle_registration_name(update: Update, context: ContextTypes.DEFAULT
     # Adminlarga xabar
     for admin_id in config.ADMIN_IDS:
         try:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"apr_{user_id}"),
+                 InlineKeyboardButton("❌ Rad etish", callback_data=f"rej_{user_id}")],
+            ])
             await context.bot.send_message(
                 admin_id,
                 f"🆕 *Yangi xodim tasdiqlanishi kutilmoqda*\n\n"
                 f"👤 {name}\n"
                 f"📍 {branch_label}\n"
                 f"🆔 {user_id}\n\n"
-                "Admin panel orqali tasdiqlang:",
+                f"Quyidagi tugmalar orqali tasdiqlang:",
                 parse_mode="Markdown",
+                reply_markup=kb,
             )
         except Exception:
             pass
