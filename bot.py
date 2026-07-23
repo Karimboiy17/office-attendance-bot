@@ -1569,22 +1569,6 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await setup_tasks_cmd(update, context)
     elif text == "⏰ Ish vaqtini sozlash":
         await work_time_settings_menu(update, context)
-    elif text == "🆕 Tasdiqlanmagan xodimlar":
-        pending = db.get_pending_employees()
-        if not pending:
-            await update.message.reply_text(
-                "✅ Barcha xodimlar tasdiqlangan.",
-                reply_markup=kb.admin_keyboard(),
-            )
-            return
-        text_lines = ["🆕 *Tasdiqlanmagan xodimlar:*\n"]
-        for emp in pending:
-            text_lines.append(f"👤 {emp['name']} — {emp['branch']} ({emp['shift']})")
-        await update.message.reply_text(
-            "\n".join(text_lines),
-            parse_mode="Markdown",
-            reply_markup=kb.pending_employees_keyboard(),
-        )
     else:
         # Xodim tugmalari
         await handle_employee_buttons(update, context)

@@ -27,7 +27,6 @@ def admin_keyboard():
         [KeyboardButton("👥 Xodimlar ro'yxati")],
         [KeyboardButton("➕ Xodim qo'shish"), KeyboardButton("➖ Xodim o'chirish")],
         [KeyboardButton("📋 Tasklarni sozlash"), KeyboardButton("⏰ Ish vaqtini sozlash")],
-        [KeyboardButton("🆕 Tasdiqlanmagan xodimlar")],
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
