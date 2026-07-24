@@ -243,6 +243,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 name=f"late_reason_{user_id}",
             )
 
+        # Adminlarga e'lon (check-in)
+        if not is_group:
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
+                    await update.message.forward_copy(admin_id)
+                except Exception:
+                    pass
+
         # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
             try:
@@ -295,6 +304,15 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += "\n💪 Ertaga ko'proq bajarishga harakat qiling!"
 
         await update.message.reply_text(msg, parse_mode="Markdown")
+
+        # Adminlarga e'lon (check-out)
+        if not is_group:
+            for admin_id in config.ADMIN_IDS:
+                try:
+                    await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
+                    await update.message.forward_copy(admin_id)
+                except Exception:
+                    pass
 
         # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
@@ -1329,6 +1347,7 @@ async def remove_employee_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             emp = db.get_employee(emp_id)
             if emp:
                 db.remove_employee(emp_id)
+                sheets.delete_employee_from_sheets(emp_id)
                 await update.message.reply_text(f"✅ {emp['name']} o'chirildi.")
             else:
                 await update.message.reply_text("❌ Xodim topilmadi.")

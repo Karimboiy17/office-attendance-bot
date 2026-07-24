@@ -146,3 +146,25 @@ def get_employees_from_sheets() -> list[dict]:
     except Exception as e:
         print(f"[Sheets] get_employees error: {e}")
         return []
+
+
+def delete_employee_from_sheets(telegram_id: int) -> bool:
+    """Xodimni Sheets dagi Xodimlar tabidan o'chirish"""
+    client = get_client()
+    if not client or not SHEET_KEY:
+        return False
+    try:
+        sheet = client.open_by_key(SHEET_KEY)
+        try:
+            ws = sheet.worksheet("Xodimlar")
+        except Exception:
+            return False
+        rows = ws.get_all_values()
+        for i, row in enumerate(rows):
+            if row and row[0].strip() == str(telegram_id):
+                ws.delete_rows(i + 1)  # 1-indexed
+                return True
+        return False
+    except Exception as e:
+        print(f"[Sheets] delete_employee error: {e}")
+        return False
