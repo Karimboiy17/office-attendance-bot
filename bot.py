@@ -1475,6 +1475,11 @@ async def handle_admin_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return
 
+    # ── Kechikish sababini qabul qilish ──
+    if user_id in pending_late_reason:
+        await handle_late_reason(update, context)
+        return
+
     # ── "Bajara olmayman" sababini qabul qilish ──
     if user_id in pending_task_reason:
         task_id = pending_task_reason.pop(user_id)
