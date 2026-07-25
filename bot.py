@@ -782,6 +782,17 @@ def admin_ranking(message):
 def admin_reports(message):
     bot.send_message(message.chat.id, "Hisobotlar funksiyasi ishlab chiqilmoqda.")
 
+
+# ── Fallback (catch-all for debug) ──
+@bot.message_handler(func=lambda m: True)
+def fallback_handler(message):
+    chat_id = message.chat.id
+    user = get_user_by_chat_id(chat_id)
+    if not user or user.get("Holat") != "Tasdiqlangan":
+        return
+    bot.send_message(chat_id, f"ℹ️ Noto'g'ri buyruq: {message.text}")
+
+
 # ── Scheduler ──
 def send_shift_reminders():
     now = datetime.now(TIMEZONE)
