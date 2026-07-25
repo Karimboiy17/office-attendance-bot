@@ -249,16 +249,16 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
                     await update.message.forward(admin_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[Video forward] Admin {admin_id}: {e}")
 
         # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
                 await update.message.forward(config.GROUP_ID)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"[Video forward] Group {config.GROUP_ID}: {e}")
 
         # Tasklarni ko'rsatish (check-in dan keyin)
         tasks = db.get_today_tasks(user_id)
@@ -311,16 +311,16 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
                     await update.message.forward(admin_id)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.error(f"[Video forward] Admin {admin_id}: {e}")
 
         # Guruhga e'lon + video
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
                 await update.message.forward(config.GROUP_ID)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"[Video forward] Group {config.GROUP_ID}: {e}")
 
         # Sheets
         sheets.sync_attendance_to_sheets({
