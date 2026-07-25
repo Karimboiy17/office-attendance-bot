@@ -239,6 +239,8 @@ def employee_kb():
 def admin_kb():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add(
+        types.KeyboardButton("💼 Ishga keldim"),
+        types.KeyboardButton("🚪 Ishdan ketdim"),
         types.KeyboardButton("✅ Foydalanuvchilarni boshqarish"),
         types.KeyboardButton("➕ Vazifa yaratish"),
         types.KeyboardButton("📋 Vazifalarni ko'rish"),
