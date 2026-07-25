@@ -2040,23 +2040,6 @@ def main():
     else:
         logger.info("[Startup] Google Sheets ulanishi yo'q")
 
-    # Yangilanish xabari (bir martalik)
-    try:
-        import asyncio
-        async def _send_update():
-            update_msg = "⚠️ *Bot yangilandi!*\n\nBotda o'zgarishlar kiritildi. Ba'zi funksiyalar stabil ishlamasligi mumkin. Muammo yuzaga kelsa, admin bilan bog'laning."
-            sent = 0
-            for emp in db.get_all_employees():
-                try:
-                    await app.bot.send_message(emp["telegram_id"], update_msg, parse_mode="Markdown")
-                    sent += 1
-                except Exception:
-                    pass
-            logger.info(f"[Startup] Yangilanish xabari {sent} ta xodimga yuborildi")
-        asyncio.run(_send_update())
-    except Exception as e:
-        logger.error(f"[Startup] Yangilanish xabari yuborilmadi: {e}")
-
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
