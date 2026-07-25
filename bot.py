@@ -248,7 +248,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for admin_id in config.ADMIN_IDS:
                 try:
                     await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
-                    await update.message.forward_copy(admin_id)
+                    await update.message.forward(admin_id)
                 except Exception:
                     pass
 
@@ -256,7 +256,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
-                await update.message.forward_copy(config.GROUP_ID)
+                await update.message.forward(config.GROUP_ID)
             except Exception:
                 pass
 
@@ -310,7 +310,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for admin_id in config.ADMIN_IDS:
                 try:
                     await context.bot.send_message(admin_id, msg, parse_mode="Markdown")
-                    await update.message.forward_copy(admin_id)
+                    await update.message.forward(admin_id)
                 except Exception:
                     pass
 
@@ -318,7 +318,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_group and config.GROUP_ID:
             try:
                 await context.bot.send_message(config.GROUP_ID, msg, parse_mode="Markdown")
-                await update.message.forward_copy(config.GROUP_ID)
+                await update.message.forward(config.GROUP_ID)
             except Exception:
                 pass
 
