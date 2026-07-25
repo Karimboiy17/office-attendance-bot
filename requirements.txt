@@ -1,6 +1,6 @@
-pyTelegramBotAPI==4.30.1
-gspread==6.2.1
-google-auth==2.56.0
-APScheduler==3.11.3
-pytz==2026.2
-python-dotenv==1.2.2
+pyTelegramBotAPI>=4.30.0
+gspread>=6.1.0
+google-auth>=2.36.0
+APScheduler>=3.10.0
+pytz>=2024.2
+python-dotenv>=1.0.0
