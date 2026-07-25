@@ -1890,6 +1890,31 @@ async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Bekor qilindi.", reply_markup=kb.admin_keyboard())
 
 
+async def broadcast_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: barcha xodimlarga xabar yuborish"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("❌ Ruxsat yo'q.")
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "📢 *Broadcast*\\n\\n"
+            "Xabarni `/broadcast <matn>` shaklida yuboring.\\n"
+            "Misol: `/broadcast Bot yangilandi!`",
+            parse_mode="Markdown",
+        )
+        return
+    text = " ".join(context.args)
+    emps = db.get_all_employees()
+    sent = 0
+    for emp in emps:
+        try:
+            await context.bot.send_message(emp["telegram_id"], text, parse_mode="Markdown")
+            sent += 1
+        except Exception:
+            pass
+    await update.message.reply_text(f"✅ {sent}/{len(emps)} ta xodimga xabar yuborildi.")
+
+
 def main():
     # DB ni initializatsiya
     db.init_db()
@@ -1917,6 +1942,7 @@ def main():
     app.add_handler(CommandHandler("remove", remove_employee_cmd))
     app.add_handler(CommandHandler("tasks", tasks_cmd))
     app.add_handler(CommandHandler("taskweek", task_week_cmd))
+    app.add_handler(CommandHandler("broadcast", broadcast_cmd))
 
     # Video handler
     app.add_handler(MessageHandler(
