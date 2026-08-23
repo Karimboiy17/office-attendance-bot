@@ -824,6 +824,7 @@ def auto_checkout_job():
 
 # ── Main ──
 if __name__ == "__main__":
+    import time
     if not init_sheets():
         print("Failed to init Sheets. Exiting.")
         exit(1)
@@ -831,4 +832,12 @@ if __name__ == "__main__":
     scheduler.add_job(auto_checkout_job, "cron", hour=AUTO_CHECKOUT_TIME.hour, minute=AUTO_CHECKOUT_TIME.minute, id="auto_checkout")
     scheduler.start()
     print("Bot started polling...")
-    bot.polling(none_stop=True)
+
+    # Telegram API vaqti-vaqti bilan 502/read-timeout berishi mumkin.
+    # polling crash bo'lsa avtomatik qayta ishga tushadi.
+    while True:
+        try:
+            bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ Polling crash: {e}. 10 soniyadan keyin qayta ishga tushadi...")
+            time.sleep(10)
