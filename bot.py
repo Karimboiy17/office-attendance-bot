@@ -226,6 +226,16 @@ def get_overall_ranking():
     return overall
 
 # ── Keyboards ──
+def safe_send(chat_id, text, **kwargs):
+    """Markdown xato bo'lsa plain text ga o'tadigan xavfsiz send"""
+    try:
+        bot.send_message(chat_id, text, parse_mode="Markdown", **kwargs)
+    except Exception:
+        try:
+            bot.send_message(chat_id, text, **kwargs)
+        except Exception:
+            pass
+
 def employee_kb():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add(
@@ -324,10 +334,9 @@ def handle_position(call):
             text=f"Arizangiz qabul qilindi:\nIsm: {name}\nLavozim: {position}\n\nAdmin tasdiqlashini kuting."
         )
         for admin_id in ADMIN_IDS:
-            bot.send_message(
+            safe_send(
                 admin_id,
                 f"🆕 *Yangi xodim*\n\nIsm: {name}\nLavozim: {position}\nID: {chat_id}",
-                parse_mode="Markdown",
                 reply_markup=approval_kb(chat_id),
             )
     else:
@@ -411,7 +420,7 @@ def check_in_button(message):
         bot.send_message(chat_id, "Bugun allaqachon ishga kelganingiz qayd etilgan.")
         return
     user_states[chat_id] = {"state": "waiting_for_check_in_video"}
-    bot.send_message(chat_id, "Ishga kelganingizni tasdiqlash uchun **video_note (aylana video)** yuboring:", parse_mode="Markdown")
+    bot.send_message(chat_id, "Ishga kelganingizni tasdiqlash uchun video_note (aylana video) yuboring:")
 
 @bot.message_handler(func=lambda m: m.text == "🚪 Ishdan ketdim")
 def check_out_button(message):
@@ -428,7 +437,7 @@ def check_out_button(message):
         bot.send_message(chat_id, "Bugun allaqachon ishdan ketganingiz qayd etilgan.")
         return
     user_states[chat_id] = {"state": "waiting_for_check_out_video"}
-    bot.send_message(chat_id, "Ishdan ketganingizni tasdiqlash uchun **video_note (aylana video)** yuboring:", parse_mode="Markdown")
+    bot.send_message(chat_id, "Ishdan ketganingizni tasdiqlash uchun video_note (aylana video) yuboring:")
 
 @bot.message_handler(content_types=["video_note"], func=lambda m: user_states.get(m.chat.id, {}).get("state") in ["waiting_for_check_in_video", "waiting_for_check_out_video"])
 def handle_video_note(message):
@@ -460,13 +469,13 @@ def handle_video_note(message):
                 msg = f"✅ *{user['Ism']}* — Check-in: {now.strftime('%H:%M')}\n📍 {branch_label} | {shift_label}"
                 for admin_id in ADMIN_IDS:
                     try:
-                        bot.send_message(admin_id, msg, parse_mode="Markdown")
+                        safe_send(admin_id, msg)
                         bot.forward_message(admin_id, chat_id, message.message_id)
                     except:
                         pass
                 if GROUP_ID_INT:
                     try:
-                        bot.send_message(GROUP_ID_INT, msg, parse_mode="Markdown")
+                        safe_send(GROUP_ID_INT, msg)
                         bot.forward_message(GROUP_ID_INT, chat_id, message.message_id)
                     except:
                         pass
@@ -481,13 +490,13 @@ def handle_video_note(message):
                 msg = f"👋 *{user['Ism']}* — Check-out: {now.strftime('%H:%M')}"
                 for admin_id in ADMIN_IDS:
                     try:
-                        bot.send_message(admin_id, msg, parse_mode="Markdown")
+                        safe_send(admin_id, msg)
                         bot.forward_message(admin_id, chat_id, message.message_id)
                     except:
                         pass
                 if GROUP_ID_INT:
                     try:
-                        bot.send_message(GROUP_ID_INT, msg, parse_mode="Markdown")
+                        safe_send(GROUP_ID_INT, msg)
                         bot.forward_message(GROUP_ID_INT, chat_id, message.message_id)
                     except:
                         pass
@@ -540,10 +549,9 @@ def my_tasks(message):
     for t in tasks:
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("✅ Bajarildi", callback_data=f"done_task_{t['ID']}"))
-        bot.send_message(
+        safe_send(
             chat_id,
             f"📋 *{t['Vazifa nomi']}*\nID: {t['ID']}\nTuri: {t['Turi']}\nMuddat: {t['Muddat']}\nHolat: {t['Holat']}",
-            parse_mode="Markdown",
             reply_markup=markup,
         )
 
@@ -627,7 +635,7 @@ def my_ranking(message):
         marker = " *" if str(r.get("chat_id")) == str(chat_id) else ""
         msg += f"{i+1}. {r['Ism']} — {r['Ball']} ball{marker}\n"
 
-    bot.send_message(chat_id, msg, parse_mode="Markdown")
+    safe_send(chat_id, msg)
 
 # ── Admin Handlers ──
 @bot.message_handler(func=lambda m: is_admin(m.chat.id) and m.text == "✅ Foydalanuvchilarni boshqarish")
@@ -722,7 +730,7 @@ def admin_due_date(message):
             bot.send_message(chat_id, f"✅ Vazifa yaratildi (ID: {task_id})")
             for eid in s["selected"]:
                 try:
-                    bot.send_message(eid, f"📋 *Yangi vazifa*\n\n{s['task_name']}\nMuddat: {message.text}\n\n📝 Mening vazifalarim tugmasini bosing.", parse_mode="Markdown", reply_markup=employee_kb())
+                    safe_send(eid, f"📋 *Yangi vazifa*\n\n{s['task_name']}\nMuddat: {message.text}\n\n📝 Mening vazifalarim tugmasini bosing.", reply_markup=employee_kb())
                 except:
                     pass
         else:
@@ -745,10 +753,9 @@ def admin_view_tasks(message):
             if eid:
                 u = get_user_by_chat_id(int(eid))
                 names.append(u["Ism"] if u else f"Noma'lum ({eid})")
-        bot.send_message(
+        safe_send(
             chat_id,
             f"📋 *{t['Vazifa nomi']}*\nID: {t['ID']}\nTuri: {t['Turi']}\nHodimlar: {', '.join(names)}\nMuddat: {t['Muddat']}\nHolat: {t['Holat']}",
-            parse_mode="Markdown",
         )
 
 @bot.message_handler(func=lambda m: is_admin(m.chat.id) and m.text == "👥 Xodimlar faoliyati")
@@ -761,7 +768,7 @@ def admin_activity(message):
     msg = "👥 *Bugungi faoliyat:*\n\n"
     for r in today:
         msg += f"👤 {r['Ism']} ({r['Lavozim']})\n📍 {r.get('Filial', '')}\n⬆️ Kirish: {r['Kirish vaqti']}\n⬇️ Chiqish: {r.get('Chiqish vaqti', '—')}\n\n"
-    bot.send_message(chat_id, msg, parse_mode="Markdown")
+    safe_send(chat_id, msg)
 
 @bot.message_handler(func=lambda m: is_admin(m.chat.id) and m.text == "📊 Reytinglar")
 def admin_ranking(message):
@@ -776,7 +783,7 @@ def admin_ranking(message):
     msg += "\n📈 *Umumiy Reyting:*\n"
     for i, r in enumerate(overall):
         msg += f"{i+1}. {r['Ism']} ({r['Lavozim']}) — {r['Ball']} ball\n"
-    bot.send_message(chat_id, msg, parse_mode="Markdown")
+    safe_send(chat_id, msg)
 
 @bot.message_handler(func=lambda m: is_admin(m.chat.id) and m.text == "📈 Hisobotlar")
 def admin_reports(message):
